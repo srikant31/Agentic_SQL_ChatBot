@@ -1,0 +1,30 @@
+# ===== Database files (don't commit actual data) =====
+*.db
+*.sqlite
+*.sqlite3
+ktl_database.db
+
+# ===== Python cache =====
+__pycache__/
+*.pyc
+
+# ===== Jupyter Notebook checkpoints =====
+.ipynb_checkpoints/
+
+# ===== Environment variables / credentials =====
+.env
+.env.local
+
+# ===== Virtual environments =====
+venv/
+.venv/
+ktl_env/
+ktl_gen/
+
+# ===== OS specific =====
+.DS_Store
+Thumbs.db
+
+# ===== IDE =====
+.vscode/
+.idea/
