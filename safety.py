@@ -1,5 +1,5 @@
 import sqlglot
-from sqlglot.expressions import Select
+from sqlglot.expressions import Query
 
 
 class UnsafeQueryError(Exception):
@@ -9,24 +9,31 @@ class UnsafeQueryError(Exception):
 
 def validate_readonly_sql(sql: str) -> None:
     """
-    Ensures the given SQL is a single, read-only SELECT statement.
+    Ensures the given SQL is a single, read-only query.
     Raises UnsafeQueryError if it isn't.
+
+    Checks against sqlglot's `Query` base class rather than just `Select`,
+    since a parenthesized SELECT parses as `Subquery`, and a UNION/INTERSECT/
+    EXCEPT of SELECTs parses as its own node type — all of these are
+    equally read-only, and `Query` is sqlglot's own semantic grouping for
+    exactly that family, with no destructive statement type included in it.
     """
     try:
         statements = sqlglot.parse(sql)
     except Exception as exc:
         raise UnsafeQueryError(f"Unable to parse SQL query: {exc}") from exc
 
-    if not statements:
+    if not statements or statements[0] is None:
         raise UnsafeQueryError("Empty SQL query.")
 
     if len(statements) > 1:
         raise UnsafeQueryError(
-            "Multiple SQL statements are not allowed — only one SELECT per query."
+            "Multiple SQL statements are not allowed — only one query per request."
         )
 
-    if not isinstance(statements[0], Select):
+    if not isinstance(statements[0], Query):
         raise UnsafeQueryError(
-            "Only SELECT statements are allowed. This query was rejected before it "
-            "ever reached the database."
+            "Only read-only queries (SELECT, or a UNION/INTERSECT/EXCEPT of "
+            "SELECTs) are allowed. This query was rejected before it ever "
+            "reached the database."
         )

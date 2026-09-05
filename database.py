@@ -17,9 +17,10 @@ def get_engine():
     return create_engine(DB_URI)
 
 
-def run_query(sql: str):
+def run_query(sql: str, engine=None):
     """Execute a validated SQL query and return (columns, rows)."""
-    engine = get_engine()
+    if engine is None:
+        engine = get_engine()
     with engine.connect() as conn:
         result = conn.execute(text(sql))
         columns = list(result.keys())
