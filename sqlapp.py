@@ -16,6 +16,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import create_agent
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
+import sqlglot
+from sqlglot.expressions import Select
 
 load_dotenv()
 
@@ -157,7 +159,37 @@ def extract_text(content):
         return "\n".join(parts) if parts else str(content)
     return str(content)
 
+class UnsafeQueryError(Exception):
+    """Raised when a SQL query fails the read-only safety check."""
+    pass
 
+
+def validate_readonly_sql(sql: str) -> None:
+    """
+    Ensures the given SQL is a single, read-only SELECT statement.
+    Raises UnsafeQueryError if it isn't — this is the real guardrail,
+    enforced in code, not something the AI is merely asked to follow.
+    """
+    try:
+        statements = sqlglot.parse(sql)
+    except Exception as exc:
+        raise UnsafeQueryError(f"Unable to parse SQL query: {exc}") from exc
+
+    if not statements:
+        raise UnsafeQueryError("Empty SQL query.")
+
+    if len(statements) > 1:
+        raise UnsafeQueryError(
+            "Multiple SQL statements are not allowed — only one SELECT per query."
+        )
+
+    statement = statements[0]
+
+    if not isinstance(statement, Select):
+        raise UnsafeQueryError(
+            "Only SELECT statements are allowed. This query was rejected before it "
+            "ever reached the database."
+        )
 # ============================================================
 # CACHED RESOURCES — built once per session
 # ============================================================
