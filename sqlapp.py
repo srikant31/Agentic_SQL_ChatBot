@@ -29,10 +29,9 @@ MYSQL_USER = os.getenv("MYSQL_USER", "root")
 MYSQL_PASSWORD = quote_plus(os.getenv("MYSQL_PASSWORD", ""))
 MYSQL_HOST = os.getenv("MYSQL_HOST", "localhost")
 MYSQL_PORT = os.getenv("MYSQL_PORT", "3306")
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "ktl")   # <- new line
 
-
-DB_URI = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/ktl"
-
+DB_URI = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"  # <- was hardcoded "ktl" here
 # Predefined questions for the EMPLOYEES table (id, name, manager_id, manager_name)
 SAMPLE_QUESTIONS = [
     "Select a sample question...",
