@@ -1,77 +1,117 @@
 import streamlit as st
 
+
 def apply_theme():
     st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
     html, body, [class*="css"] {
-        font-family: 'Inter', -apple-system, sans-serif;
-        color: #1E1A16;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        color: #37352F;
     }
-    .stApp { background-color: #C7A07A; }
-    .block-container { max-width: 760px; padding-top: 3rem; padding-bottom: 3rem; }
-    h1 { font-weight: 600; font-size: 2.1rem; letter-spacing: -0.01em; color: #1E1A16; }
-    [data-testid="stCaptionContainer"] { color: #4A3F35; }
-    [data-testid="stSidebar"] { background-color: #C7A07A; border-right: 2px solid #000000; }
-    hr, [data-testid="stDivider"] { border-color: #000000 !important; }
-    .stTextArea textarea, .stSelectbox div[data-baseweb="select"] {
-        background-color: #C7A07A !important;
-        border: 1.5px solid #000000 !important;
-        border-radius: 4px !important;
-        box-shadow: none !important;
-        color: #1E1A16 !important;
+
+    .stApp {
+        background-color: #FFFFFF;
     }
-    .stButton button {
-        background-color: #000000;
-        color: #F3E6D8;
-        border: 1.5px solid #000000;
-        border-radius: 4px;
-        padding: 0.4rem 1rem;
-        font-weight: 500;
-        box-shadow: none;
-        transition: opacity 0.15s ease;
+
+    .block-container {
+        max-width: 800px;
+        padding-top: 3rem;
+        padding-bottom: 3rem;
     }
-    .stButton button:hover { opacity: 0.8; color: #F3E6D8; }
-    .stButton button:disabled { background-color: transparent; border-color: #4A3F35; color: #4A3F35; }
-    [data-testid="stExpander"] { border: 1.5px solid #000000; border-radius: 4px; background-color: #C7A07A; }
-    [data-testid="stAlert"] {
-        border: 1.5px solid #000000;
+
+    [data-testid="stSidebar"] {
+        background-color: #FBFBFA;
+        border-right: 1px solid #E9E9E7;
+    }
+
+    h1, h2, h3 {
+        color: #37352F;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+    }
+
+    p, .stMarkdown, [data-testid="stCaptionContainer"] {
+        color: #6B6B6A;
+    }
+
+    .stButton > button {
+        background-color: #FFFFFF;
+        color: #37352F;
+        border: 1px solid #E9E9E7;
         border-radius: 6px;
-        background-color: #C7A07A;
-        box-shadow: 2px 2px 0px rgba(0,0,0,0.15);
+        font-weight: 500;
+        padding: 0.4rem 1rem;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+        transition: background-color 0.15s ease;
     }
-    code, .stCodeBlock {
-        background-color: #B78F68 !important;
-        border: 1px solid #000000 !important;
-        border-radius: 4px;
-        color: #1E1A16 !important;
+    .stButton > button:hover {
+        background-color: #F7F6F5;
+        border-color: #D9D9D6;
+        color: #37352F;
     }
 
-    /* Card-style container — used to visually group the proposed-query
-       section so it reads as one distinct step, not a run of loose widgets. */
+    .stButton > button[kind="primary"] {
+        background-color: #37352F;
+        color: #FFFFFF;
+        border: 1px solid #37352F;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background-color: #2F2E2A;
+    }
+
+    .stTextArea textarea, .stTextInput input, [data-baseweb="select"] {
+        background-color: #FFFFFF !important;
+        border: 1px solid #E9E9E7 !important;
+        border-radius: 6px !important;
+        color: #37352F !important;
+    }
+    .stTextArea textarea:focus, .stTextInput input:focus {
+        border-color: #2383E2 !important;
+        box-shadow: 0 0 0 1px #2383E2 !important;
+    }
+
     [data-testid="stVerticalBlockBorderWrapper"] {
-        background-color: #D9B792 !important;
-        border: 1.5px solid #000000 !important;
+        background-color: #FFFFFF !important;
+        border: 1px solid #E9E9E7 !important;
         border-radius: 8px !important;
-        box-shadow: 3px 3px 0px rgba(0,0,0,0.2) !important;
-        padding: 0.5rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05) !important;
+        padding: 0.75rem;
     }
 
-    /* Metric widget (used for the session question counter) */
+    [data-testid="stAlert"] {
+        border: 1px solid #E9E9E7;
+        border-radius: 6px;
+        background-color: #F7F6F5;
+        box-shadow: none;
+    }
+
+    code, .stCodeBlock {
+        background-color: #F7F6F5 !important;
+        border: 1px solid #E9E9E7 !important;
+        border-radius: 4px;
+        color: #37352F !important;
+    }
+
     [data-testid="stMetric"] {
-        background-color: #D9B792;
-        border: 1.5px solid #000000;
+        background-color: #F7F6F5;
+        border: 1px solid #E9E9E7;
         border-radius: 6px;
         padding: 0.6rem 0.8rem;
-        box-shadow: 2px 2px 0px rgba(0,0,0,0.15);
     }
-    [data-testid="stMetricLabel"] { color: #4A3F35; }
+    [data-testid="stMetricLabel"] { color: #6B6B6A; }
 
-    /* Progress bar (used for the confidence indicator) */
     .stProgress > div > div {
-        background-color: #000000 !important;
+        background-color: #2383E2 !important;
         border-radius: 4px;
     }
+
+    [data-testid="stDataFrame"] {
+        border: 1px solid #E9E9E7;
+        border-radius: 6px;
+    }
+
+    hr { border-color: #E9E9E7 !important; }
     </style>
     """, unsafe_allow_html=True)
