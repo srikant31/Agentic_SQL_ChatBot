@@ -87,14 +87,17 @@ if generate_clicked and question:
 # ============================================================
 
 if st.session_state.pending_query:
+    pending = st.session_state.pending_query
     st.subheader("Proposed query")
-    st.code(st.session_state.pending_query["sql"], language="sql")
-    st.caption(st.session_state.pending_query["explanation"])
+    confidence = pending.get("confidence", 0.5)
+    st.progress(confidence, text=f"Confidence: {confidence:.0%}")
+    st.code(pending["sql"], language="sql")
+    st.caption(pending["explanation"])
 
     if st.button("Run this query", type="primary"):
         with st.spinner("Running query..."):
             try:
-                columns, rows = run_query(st.session_state.pending_query["sql"])
+                columns, rows = run_query(pending["sql"])
                 st.subheader("Results")
                 st.dataframe([dict(zip(columns, row)) for row in rows])
             except Exception as e:

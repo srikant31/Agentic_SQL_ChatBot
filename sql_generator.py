@@ -24,9 +24,12 @@ STRICT RULES:
 4. NEVER use INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, or any
    other statement that isn't a SELECT.
 5. Give a short, plain-English explanation of what the query does.
-6. Return ONLY valid JSON in this exact shape, nothing else:
+6. Give a confidence score between 0 and 1: how sure you are that this
+   query fully and correctly answers the question, given the schema above.
+   Lower it if the question is ambiguous or you had to guess at intent.
+7. Return ONLY valid JSON in this exact shape, nothing else:
 
-{{"sql": "SELECT ...;", "explanation": "Short explanation."}}
+{{"sql": "SELECT ...;", "explanation": "Short explanation.", "confidence": 0.9}}
 
 DATABASE SCHEMA:
 {schema_text}
@@ -52,4 +55,14 @@ USER QUESTION:
     if not sql:
         raise RuntimeError("Gemini did not return a SQL query.")
 
-    return {"sql": sql.strip(), "explanation": result.get("explanation", "Query generated.").strip()}
+    try:
+        confidence = float(result.get("confidence", 0.5))
+    except (TypeError, ValueError):
+        confidence = 0.5
+    confidence = max(0.0, min(1.0, confidence))
+
+    return {
+        "sql": sql.strip(),
+        "explanation": result.get("explanation", "Query generated.").strip(),
+        "confidence": confidence,
+    }
