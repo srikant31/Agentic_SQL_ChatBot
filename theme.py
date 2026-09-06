@@ -35,12 +35,43 @@ def apply_theme():
     .stButton button:hover { opacity: 0.8; color: #F3E6D8; }
     .stButton button:disabled { background-color: transparent; border-color: #4A3F35; color: #4A3F35; }
     [data-testid="stExpander"] { border: 1.5px solid #000000; border-radius: 4px; background-color: #C7A07A; }
-    [data-testid="stAlert"] { border: 1.5px solid #000000; border-radius: 4px; background-color: #C7A07A; }
+    [data-testid="stAlert"] {
+        border: 1.5px solid #000000;
+        border-radius: 6px;
+        background-color: #C7A07A;
+        box-shadow: 2px 2px 0px rgba(0,0,0,0.15);
+    }
     code, .stCodeBlock {
         background-color: #B78F68 !important;
         border: 1px solid #000000 !important;
         border-radius: 4px;
         color: #1E1A16 !important;
+    }
+
+    /* Card-style container — used to visually group the proposed-query
+       section so it reads as one distinct step, not a run of loose widgets. */
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        background-color: #D9B792 !important;
+        border: 1.5px solid #000000 !important;
+        border-radius: 8px !important;
+        box-shadow: 3px 3px 0px rgba(0,0,0,0.2) !important;
+        padding: 0.5rem;
+    }
+
+    /* Metric widget (used for the session question counter) */
+    [data-testid="stMetric"] {
+        background-color: #D9B792;
+        border: 1.5px solid #000000;
+        border-radius: 6px;
+        padding: 0.6rem 0.8rem;
+        box-shadow: 2px 2px 0px rgba(0,0,0,0.15);
+    }
+    [data-testid="stMetricLabel"] { color: #4A3F35; }
+
+    /* Progress bar (used for the confidence indicator) */
+    .stProgress > div > div {
+        background-color: #000000 !important;
+        border-radius: 4px;
     }
     </style>
     """, unsafe_allow_html=True)
