@@ -38,8 +38,12 @@ def apply_theme():
         letter-spacing: -0.01em;
     }
 
-    p, .stMarkdown, [data-testid="stCaptionContainer"] {
-        color: #9BA8AB;
+    p, .stMarkdown {
+        color: #CCD0CF;
+    }
+    [data-testid="stCaptionContainer"] {
+        color: #B8C4C6 !important;
+        opacity: 1 !important;
     }
 
     .stButton > button {
@@ -66,6 +70,15 @@ def apply_theme():
     .stButton > button[kind="primary"]:hover {
         background-color: #9BA8AB;
         border-color: #9BA8AB;
+    }
+
+    .stButton > button:disabled,
+    .stButton > button:disabled:hover {
+        background-color: #11212D !important;
+        color: #4A5C6A !important;
+        border: 1px solid #253745 !important;
+        opacity: 1 !important;
+        cursor: not-allowed;
     }
 
     .stTextArea textarea, .stTextInput input, [data-baseweb="select"] {
@@ -106,7 +119,7 @@ def apply_theme():
         border-radius: 6px;
         padding: 0.6rem 0.8rem;
     }
-    [data-testid="stMetricLabel"] { color: #9BA8AB; }
+    [data-testid="stMetricLabel"] { color: #B8C4C6; }
     [data-testid="stMetricValue"] { color: #CCD0CF; }
 
     .stProgress > div > div {
