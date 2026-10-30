@@ -60,6 +60,10 @@ def apply_theme():
         border-color: #9BA8AB;
         color: #CCD0CF;
     }
+    .stButton > button [data-testid="stMarkdownContainer"],
+    .stButton > button p {
+        color: inherit !important;
+    }
 
     .stButton > button[kind="primary"] {
         background-color: #CCD0CF;
@@ -121,11 +125,6 @@ def apply_theme():
     }
     [data-testid="stMetricLabel"] { color: #B8C4C6; }
     [data-testid="stMetricValue"] { color: #CCD0CF; }
-
-    .stProgress > div > div {
-        background-color: #CCD0CF !important;
-        border-radius: 4px;
-    }
 
     [data-testid="stDataFrame"] {
         border: 1px solid #253745;
