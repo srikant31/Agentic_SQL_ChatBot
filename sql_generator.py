@@ -14,7 +14,7 @@ def generate_sql(question: str, schema_text: str) -> dict:
     llm = ChatGoogleGenerativeAI(temperature=0, model=model)
 
     prompt = f"""
-You are a SQL assistant for a MySQL database.
+You are a SQL assistant for a SQLite snapshot of role-authorized live MySQL data. Use SQLite syntax.
 
 Convert the user's natural-language question into a SQL query using ONLY
 the tables and columns shown in the schema below.
