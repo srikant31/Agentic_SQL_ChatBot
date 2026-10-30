@@ -1,4 +1,5 @@
 import json
+import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from utils import extract_text
@@ -9,7 +10,8 @@ def generate_sql(question: str, schema_text: str) -> dict:
     Single call to Gemini: given the schema and a question, generate
     exactly one SQL query plus a short explanation. Does not execute it.
     """
-    llm = ChatGoogleGenerativeAI(temperature=0, model="gemini-3.6-flash")
+    model = os.getenv("GEMINI_LLM_MODEL", "gemini-3.6-flash")
+    llm = ChatGoogleGenerativeAI(temperature=0, model=model)
 
     prompt = f"""
 You are a SQL assistant for a MySQL database.
