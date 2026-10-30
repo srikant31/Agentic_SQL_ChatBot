@@ -46,7 +46,7 @@ def apply_theme():
         opacity: 1 !important;
     }
 
-    .stButton > button {
+    :is(.stButton, .stFormSubmitButton) > button {
         background-color: #11212D;
         color: #CCD0CF;
         border: 1px solid #4A5C6A;
@@ -55,29 +55,29 @@ def apply_theme():
         padding: 0.4rem 1rem;
         transition: background-color 0.15s ease;
     }
-    .stButton > button:hover {
+    :is(.stButton, .stFormSubmitButton) > button:hover {
         background-color: #253745;
         border-color: #9BA8AB;
         color: #CCD0CF;
     }
-    .stButton > button [data-testid="stMarkdownContainer"],
-    .stButton > button p {
+    :is(.stButton, .stFormSubmitButton) > button [data-testid="stMarkdownContainer"],
+    :is(.stButton, .stFormSubmitButton) > button p {
         color: inherit !important;
     }
 
-    .stButton > button[kind="primary"] {
+    :is(.stButton, .stFormSubmitButton) > button[kind="primary"] {
         background-color: #CCD0CF;
         color: #06141B;
         border: 1px solid #CCD0CF;
         font-weight: 600;
     }
-    .stButton > button[kind="primary"]:hover {
+    :is(.stButton, .stFormSubmitButton) > button[kind="primary"]:hover {
         background-color: #9BA8AB;
         border-color: #9BA8AB;
     }
 
-    .stButton > button:disabled,
-    .stButton > button:disabled:hover {
+    :is(.stButton, .stFormSubmitButton) > button:disabled,
+    :is(.stButton, .stFormSubmitButton) > button:disabled:hover {
         background-color: #11212D !important;
         color: #4A5C6A !important;
         border: 1px solid #253745 !important;
