@@ -2,7 +2,7 @@ import json
 from unittest.mock import patch, MagicMock
 import pytest
 
-from sql_generator import generate_sql
+from sql_generator import LLMProviderError, generate_sql
 
 
 def make_fake_response(text: str):
@@ -72,3 +72,36 @@ def test_generate_sql_defaults_missing_explanation(mock_llm_class):
     )
     result = generate_sql("test question", "schema")
     assert result["explanation"] == "Query generated."
+
+
+@pytest.mark.parametrize("payload", [[], None, {"sql": ["SELECT 1"]}, {"sql": "SELECT 1", "explanation": 42}, {"status": {}, "sql": "SELECT 1"}])
+@patch("sql_generator.ChatGoogleGenerativeAI")
+def test_malformed_response_shapes_are_rejected(mock_llm_class, payload):
+    mock_llm_class.return_value.invoke.return_value = make_fake_response(json.dumps(payload))
+    with pytest.raises(RuntimeError):
+        generate_sql("test", "schema")
+
+
+@patch("sql_generator.ChatGoogleGenerativeAI")
+def test_provider_clarification_and_real_usage_metadata(mock_llm_class):
+    response = make_fake_response('{"status":"clarification","message":"Which metric?"}')
+    response.usage_metadata = {"input_tokens": 100, "output_tokens": 12, "total_tokens": 112, "other": "ignored"}
+    mock_llm_class.return_value.invoke.return_value = response
+    result = generate_sql("top departments", "schema")
+    assert result["status"] == "clarification"
+    assert result["usage"] == {"input_tokens": 100, "output_tokens": 12, "total_tokens": 112}
+
+
+@patch("sql_generator.ChatGoogleGenerativeAI")
+def test_nonfinite_model_confidence_is_not_presented_as_certainty(mock_llm_class):
+    mock_llm_class.return_value.invoke.return_value = make_fake_response('{"sql":"SELECT 1","confidence":"NaN"}')
+    assert generate_sql("test", "schema")["confidence"] == .5
+
+
+@patch("sql_generator.ChatGoogleGenerativeAI")
+def test_provider_denial_is_actionable_and_does_not_echo_response(mock_llm_class):
+    PermissionDenied = type("GooglePermissionDeniedError", (Exception,), {})
+    mock_llm_class.return_value.invoke.side_effect = PermissionDenied("untrusted provider details and fake credential")
+    with pytest.raises(LLMProviderError, match="Gemini denied access") as error:
+        generate_sql("test", "schema")
+    assert "untrusted provider details" not in str(error.value)

@@ -37,7 +37,7 @@ def test_employee_only_sees_own_department_despite_or_true(engine):
 def test_salary_cannot_be_recovered_by_non_hr(engine, name, sql):
     with pytest.raises(sqlite3.DatabaseError):
         run_query(sql, USERS[name], engine)
-    assert "SALARY" not in get_schema(USERS[name])
+    assert "SALARY" not in get_schema(USERS[name], engine)
 
 def test_hr_sees_all_rows_and_salaries(engine):
     columns, rows = run_query("SELECT * FROM EMPLOYEES", USERS["hr"], engine)

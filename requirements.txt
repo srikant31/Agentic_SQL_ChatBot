@@ -90,3 +90,4 @@ xxhash==4.0.1
 yarl==1.24.5
 zstandard==0.25.0
 sqlglot==30.18.0
+rank-bm25==0.2.2

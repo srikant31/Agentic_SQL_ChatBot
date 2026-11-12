@@ -30,4 +30,7 @@ Thumbs.db
 .idea/
 ca.pem
 
+# Generated local evaluation reports (not the reviewed dataset)
+/evaluation/offline_checks.json
+
 session-checklist.md

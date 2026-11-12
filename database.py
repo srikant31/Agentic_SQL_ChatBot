@@ -8,6 +8,8 @@ from sqlalchemy import create_engine, text
 from config import DB_URI
 from rbac import require, visible_columns
 from safety import validate_readonly_sql
+from schema_context import get_catalog
+from semantic_validation import validate_sql
 
 DEMO_TABLE = "RBAC_DEMO_EMPLOYEES"
 AUDIT_TABLE = "RBAC_DEMO_AUDIT"
@@ -49,11 +51,10 @@ def ensure_demo():
     initialize_demo()
     return True
 
-def get_schema(user):
+def get_schema(user, engine=None):
     require(user, "query")
-    return "CREATE TABLE EMPLOYEES (" + ", ".join(
-        f"{c} {'INTEGER' if c in ('EMPLOYEE_ID', 'SALARY') else 'TEXT'}" for c in visible_columns(user)
-    ) + ");\nOnly this table exists. Rows are already restricted to your authorized scope. Use SQLite SQL."
+    engine = engine if engine is not None else get_engine()
+    return get_catalog(user, engine).render()
 
 def _authorized_rows(user, engine):
     require(user, "query")
@@ -63,20 +64,24 @@ def _authorized_rows(user, engine):
     if user.role == "employee":
         statement += " WHERE DEPARTMENT = :department"
         params["department"] = user.department
+    statement += " LIMIT 10001"
     with engine.connect() as conn:
-        rows = [tuple(row) for row in conn.execute(text(statement), params)]
+        rows = [tuple(row) for row in conn.execute(text(statement), params).fetchmany(10_001)]
+        if len(rows) > 10_000:
+            raise ValueError("Authorized snapshot exceeds 10,000 employees. Narrow the approved source before querying.")
     return columns, rows
 
 def run_query(sql, user=None, engine=None):
     require(user, "query")
     validate_readonly_sql(sql)
     engine = engine if engine is not None else get_engine()
+    validate_sql(sql, get_catalog(user, engine))
     columns, rows = _authorized_rows(user, engine)
     with sqlite3.connect(":memory:") as sandbox:
         sandbox.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 1_000_000)
         sandbox.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 20_000)
         sandbox.setlimit(sqlite3.SQLITE_LIMIT_EXPR_DEPTH, 100)
-        definitions = ", ".join(f"{c} {'INTEGER' if c in ('EMPLOYEE_ID', 'SALARY') else 'TEXT'}" for c in columns)
+        definitions = ", ".join(f"{c} {'INTEGER' if c in ('EMPLOYEE_ID', 'SALARY') else 'TEXT'}{' PRIMARY KEY' if c == 'EMPLOYEE_ID' else ''}" for c in columns)
         sandbox.execute(f"CREATE TABLE EMPLOYEES ({definitions})")
         sandbox.executemany(f"INSERT INTO EMPLOYEES VALUES ({','.join('?' for _ in columns)})", rows)
         sandbox.commit()

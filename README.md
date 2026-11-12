@@ -1,5 +1,11 @@
 # SQL Agent with LangChain
 
+**Current implementation:** schema intelligence, business-context BM25 retrieval, reviewed
+SQL examples and bounded semantic validation extend the role-authorized MySQL-to-SQLite
+workflow. See [SCHEMA_INTELLIGENCE.md](SCHEMA_INTELLIGENCE.md) for the current architecture,
+review process, tests and evaluation commands; some historical walkthroughs below describe
+earlier versions.
+
 A hands-on project exploring how to connect Large Language Models to relational
 databases — starting from raw `sqlite3`, moving through `SQLAlchemy` as a
 universal database connector, and finally building a working **SQL Agent**
