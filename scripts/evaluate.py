@@ -22,6 +22,7 @@ from database import initialize_demo, run_query
 from rbac import USERS
 from semantic_validation import validate_sql
 from sql_examples import load_examples
+from sql_generator import provider_settings
 from utils import compare_result_rows as compare_rows
 from context_models import fingerprint
 from business_context import RULES_PATH
@@ -112,7 +113,8 @@ def evaluate(*, mode="D", split="heldout", live_llm=False, cases=None,
             if usage_available and input_price_per_million is not None and output_price_per_million is not None else None)
     executions = [record["execution_success"] for record in records if record["execution_success"] is not None]
     return {"mode": mode, "split": split,
-            "model": os.getenv("GEMINI_LLM_MODEL", "gemini-3.6-flash"),
+            "provider": provider_settings()[0],
+            "model": provider_settings()[4],
             "dataset_version": fingerprint(all_cases),
             "example_corpus_version": fingerprint(load_examples()),
             "business_file_version": fingerprint(RULES_PATH.read_text(encoding="utf-8")),

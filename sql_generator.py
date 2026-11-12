@@ -11,16 +11,39 @@ class LLMProviderError(RuntimeError):
     """An actionable provider failure without response bodies or credential material."""
 
 
+# provider -> (display name, API-key variable, model variable, default model)
+PROVIDERS = {
+    "gemini": ("Gemini", "GOOGLE_API_KEY", "GEMINI_LLM_MODEL", "gemini-3.6-flash"),
+    "groq": ("Groq", "GROQ_API_KEY", "GROQ_LLM_MODEL", "llama-3.3-70b-versatile"),
+}
+
+
+def provider_settings() -> tuple[str, str, str, str, str]:
+    """(provider, label, key variable, model variable, model) from LLM_PROVIDER; Gemini is the default."""
+    provider = os.getenv("LLM_PROVIDER", "gemini").strip().lower() or "gemini"
+    if provider not in PROVIDERS:
+        raise LLMProviderError("Unknown LLM_PROVIDER. Use 'gemini' or 'groq'.")
+    label, key_env, model_env, default_model = PROVIDERS[provider]
+    return provider, label, key_env, model_env, os.getenv(model_env, default_model)
+
+
+def _build_llm(provider: str, model: str):
+    if provider == "groq":
+        from langchain_groq import ChatGroq  # imported lazily so Gemini-only installs keep working
+        return ChatGroq(temperature=0, model=model)
+    return ChatGoogleGenerativeAI(temperature=0, model=model)
+
+
 def generate_sql(question: str, schema_text: str) -> dict:
     """
-    Single call to Gemini: given the schema and a question, generate
-    exactly one SQL query plus a short explanation. Does not execute it.
+    Single call to the configured LLM (Gemini by default, or Groq via LLM_PROVIDER=groq): given the
+    schema and a question, generate exactly one SQL query plus a short explanation. Does not execute it.
     """
-    model = os.getenv("GEMINI_LLM_MODEL", "gemini-3.6-flash")
+    provider, label, key_env, model_env, model = provider_settings()
     try:
-        llm = ChatGoogleGenerativeAI(temperature=0, model=model)
+        llm = _build_llm(provider, model)
     except Exception as exc:
-        raise LLMProviderError("The Gemini client could not be configured. Check GOOGLE_API_KEY and GEMINI_LLM_MODEL.") from exc
+        raise LLMProviderError(f"The {label} client could not be configured. Check {key_env} and {model_env}.") from exc
 
     prompt = f"""
 You are a SQL assistant for a SQLite snapshot of role-authorized live MySQL data. Use SQLite syntax.
@@ -58,11 +81,11 @@ AUTHORIZED CONTEXT (schema, reviewed definitions, required contract and optional
     except Exception as exc:
         name = type(exc).__name__.lower()
         if any(marker in name for marker in ("permission", "authentication", "unauthorized")):
-            message = "Gemini denied access. Check the configured API key's permissions and access to GEMINI_LLM_MODEL."
+            message = f"{label} denied access. Check the configured API key's permissions and access to {model_env}."
         elif any(marker in name for marker in ("quota", "ratelimit", "resourceexhausted")):
-            message = "The Gemini quota or request limit was reached. Try again later or check the provider quota."
+            message = f"The {label} quota or request limit was reached. Try again later or check the provider quota."
         else:
-            message = "The Gemini request failed. Check provider availability and the configured model."
+            message = f"The {label} request failed. Check provider availability and the configured model."
         raise LLMProviderError(message) from exc
     usage = getattr(response, "usage_metadata", None)
     usage = {key: value for key, value in usage.items() if key in {"input_tokens", "output_tokens", "total_tokens"}
@@ -77,29 +100,29 @@ AUTHORIZED CONTEXT (schema, reviewed definitions, required contract and optional
     try:
         result = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise RuntimeError("Gemini returned invalid JSON.") from exc
+        raise RuntimeError(f"{label} returned invalid JSON.") from exc
 
     if not isinstance(result, dict):
-        raise RuntimeError("Gemini returned a JSON value instead of an object.")
+        raise RuntimeError(f"{label} returned a JSON value instead of an object.")
     status = result.get("status", "proposal")
     if not isinstance(status, str):
-        raise RuntimeError("Gemini returned an invalid response status.")
+        raise RuntimeError(f"{label} returned an invalid response status.")
     if status in {"clarification", "unsupported"}:
         message = result.get("message")
         if not isinstance(message, str) or not message.strip():
-            raise RuntimeError("Gemini did not explain why it cannot propose a query.")
+            raise RuntimeError(f"{label} did not explain why it cannot propose a query.")
         return {"status": status, "message": message.strip()[:2000], "usage": usage}
     if status != "proposal":
-        raise RuntimeError("Gemini returned an invalid response status.")
+        raise RuntimeError(f"{label} returned an invalid response status.")
 
     sql = result.get("sql")
     if not sql:
-        raise RuntimeError("Gemini did not return a SQL query.")
+        raise RuntimeError(f"{label} did not return a SQL query.")
     if not isinstance(sql, str) or len(sql) > 20_000:
-        raise RuntimeError("Gemini returned an invalid SQL value.")
+        raise RuntimeError(f"{label} returned an invalid SQL value.")
     explanation = result.get("explanation", "Query generated.")
     if not isinstance(explanation, str):
-        raise RuntimeError("Gemini returned an invalid explanation.")
+        raise RuntimeError(f"{label} returned an invalid explanation.")
 
     try:
         confidence = float(result.get("confidence", 0.5))
