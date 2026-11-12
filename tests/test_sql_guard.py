@@ -26,6 +26,8 @@ def test_admin_and_explicit_caps():
     assert "LIMIT 100" in validate("SELECT * FROM orders LIMIT 900")
     assert "LIMIT 5" in validate("SELECT * FROM orders LIMIT 5")
     with pytest.raises(ValueError): validate("SELECT 1", "unknown")
+    union = validate("SELECT customer_id FROM customers UNION SELECT customer_id FROM customers")
+    assert "LIMIT 100" in validate(union)
 
 
 def test_connected_catalog_only_narrows_access():
