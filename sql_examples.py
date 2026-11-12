@@ -6,8 +6,11 @@ from pathlib import Path
 from sqlglot import exp
 from sqlglot.optimizer.scope import traverse_scope
 
+import logging
+
 from business_context import analyze_intent
 from context_models import SearchDocument, fingerprint
+from diagnostics import log_event
 from rbac import allowed
 from retrieval import cached_index
 from safety import SchemaValidationError, UnsafeQueryError, validate_sql_schema
@@ -72,7 +75,9 @@ def eligible_examples(records, catalog, rules, user) -> tuple[dict, ...]:
                 continue
             intent = analyze_intent(record["question"], catalog, rules, user)
             validate_sql(record["sql"], catalog, intent, rules)
-        except (ValueError, KeyError, TypeError, AttributeError, SchemaValidationError, UnsafeQueryError):
+        except (ValueError, KeyError, TypeError, AttributeError, SchemaValidationError, UnsafeQueryError) as exc:
+            # Excluding an example is intentional, but the reason must be inspectable (DEBUG level).
+            log_event("example_ineligible", logging.DEBUG, example=record.get("id"), reason=type(exc).__name__)
             continue
         result.append(record)
     return tuple(result)

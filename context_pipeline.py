@@ -17,8 +17,8 @@ CONTEXT_MAX_CHARACTERS = 18_000
 
 def _engine(engine):
     if engine is None:
-        from database import get_engine
-        return get_engine()
+        from database import get_read_engine
+        return get_read_engine()
     return engine
 
 

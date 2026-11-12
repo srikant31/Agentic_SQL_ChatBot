@@ -8,12 +8,15 @@ from safety import SchemaValidationError, UnsafeQueryError
 from semantic_validation import SemanticValidationError
 from sql_generator import LLMProviderError
 from config import MAX_QUESTIONS_PER_SESSION
+from diagnostics import log_failure
 
 
 def show_query_error(exc):
     if isinstance(exc, (SemanticValidationError, SchemaValidationError, UnsafeQueryError, PermissionError, ValueError)):
+        log_failure("query_rejected", exc)
         st.error(f"Denied or invalid query: {exc}")
     else:
+        log_failure("query_failed", exc)
         st.error("The query could not be completed. Check the connection and try a narrower question.")
 
 st.set_page_config(page_title="SQL Agent · RBAC Demo", page_icon="🗄️", layout="wide")
@@ -24,7 +27,8 @@ st.info(scope_description(user))
 st.caption("Fictional demo records on the existing Aiven service. SQL queries read a fresh, role-filtered snapshot. Only IT admin can edit job titles through the approval screen.")
 try:
     ensure_demo()
-except Exception:
+except Exception as exc:
+    log_failure("demo_setup_failed", exc)
     st.error("Could not prepare the Aiven demo data. Check the database service and credentials.")
     st.stop()
 
@@ -32,7 +36,8 @@ with st.sidebar:
     st.caption("Schema intelligence · Backend-enforced permissions")
     try:
         st.code(get_schema(user), language="sql")
-    except Exception:
+    except Exception as exc:
+        log_failure("schema_load_failed", exc)
         st.error("The approved schema could not be loaded. Check the database connection or source mapping.")
         st.stop()
 if st.button("Show my permitted data"):
@@ -40,7 +45,8 @@ if st.button("Show my permitted data"):
         columns, rows = run_query("SELECT * FROM EMPLOYEES ORDER BY EMPLOYEE_ID", user)
         st.dataframe([dict(zip(columns, row)) for row in rows], hide_index=True)
         st.success(f"{len(rows)} authorized rows. Only your permitted columns are returned.")
-    except Exception:
+    except Exception as exc:
+        log_failure("permitted_data_failed", exc)
         st.error("The live database could not be queried.")
 
 with st.expander("Demonstrate a denied query"):
@@ -77,10 +83,13 @@ if st.button("Generate SQL", type="primary", disabled=not question or remaining 
             else:
                 st.info(result["message"])
     except (SemanticValidationError, SchemaValidationError, UnsafeQueryError) as exc:
+        log_failure("proposal_validation_failed", exc)
         st.error(f"Query validation failed: {exc}")
     except LLMProviderError as exc:
+        log_failure("llm_provider_failed", exc)
         st.error(str(exc))
-    except Exception:
+    except Exception as exc:
+        log_failure("proposal_failed", exc)
         st.error("Could not generate an allowed query. Try a question about the columns in your permitted schema.")
 
 pending = st.session_state.pending_query

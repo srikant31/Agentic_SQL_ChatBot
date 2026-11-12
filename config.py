@@ -23,6 +23,15 @@ MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "ktl")
 
 DB_URI = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}?ssl_ca=ca.pem"
 
+# Optional least-privilege account for the question-answering path (SELECT on the demo employee table only).
+# When unset, reads fall back to the privileged account above, exactly as before.
+MYSQL_READONLY_USER = os.getenv("MYSQL_READONLY_USER", "")
+READONLY_DB_URI = (
+    f"mysql+pymysql://{MYSQL_READONLY_USER}:{quote_plus(os.getenv('MYSQL_READONLY_PASSWORD', ''))}"
+    f"@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}?ssl_ca=ca.pem"
+    if MYSQL_READONLY_USER else None
+)
+
 SAMPLE_QUESTIONS = [
     "Select a sample question...",
     "Tell me the manager's name for each employee along with their employee ID and manager ID. If no manager exists, return 'CEO' as the manager name and 0 as the manager ID.",

@@ -12,6 +12,13 @@ from rbac import allowed, require
 
 RULES_PATH = Path(__file__).resolve().parent / "metadata" / "business_rules.yaml"
 NUMBERS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "ten": 10}
+WRITE_REQUEST = r"(?:^|[.;]\s*|\b(?:and|then|please)\s+)(?:delete|drop|truncate|insert|update|alter|create)\b"
+UNSUPPORTED_DATA = (r"\b(customers?|revenue|refunds?|cancelled|hired?|hiring|joined|tenure|audit|history|growth|active employees|employment|title changes)\b"
+                    r"|\b(?:customer|sales|purchase|placed)\s+orders?\b|\borders?\s+(?:placed|total|count|value)\b"
+                    r"|\b(last|this|previous)\s+(month|year|quarter|week)\b|\bas of\b|\bmonthly\b")
+LOCATION_WORDS = r"\b(?:city|cities|location|locations|region|regions|country|countries)\b"
+# Case-sensitive on purpose: a capitalized place-like word that is not a known department.
+NAMED_GROUP = r"\b(?:in|for|from|at|of)\s+(?!(?:Engineering|HR|IT)\b)[A-Z][a-z]+\s+(?:employees|staff|people)\b"
 
 
 @lru_cache(maxsize=16)
@@ -90,13 +97,18 @@ def analyze_intent(question: str, catalog, rules, user) -> Intent:
     q = question.lower().strip()
     if re.search(r"\b(salar(?:y|ies)|payroll|compensation|wages?|pay)\b", q) and not allowed(user, "salary"):
         return Intent("denied", "Your role cannot query salary information.")
-    if re.search(r"\b(delete|drop|truncate|insert|update|alter|create)\b", q):
+    # Imperative write verbs only (start of the request or after and/then/please/;), so questions like
+    # "which employees can update their title?" are not rejected. This is a UX pre-check; the SQL parser
+    # and the SQLite authorizer remain the actual enforcement.
+    if re.search(WRITE_REQUEST, q):
         return Intent("unsupported", "The SQL assistant supports read-only analytics. Use the approved admin screen for job-title edits.")
     if re.search(r"other database tables|sqlite_master|information_schema|ignore.+schema", q):
         return Intent("denied", "Only the authorized logical employee table is available.")
-    unsupported = r"\b(customers?|orders?|revenue|refunds?|cancelled|hired?|hiring|joined|tenure|audit|history|growth|active employees|employment|title changes)\b|\b(last|this|previous)\s+(month|year|quarter|week)\b|\bas of\b|\bmonthly\b"
-    if re.search(unsupported, q):
+    if re.search(UNSUPPORTED_DATA, q):
         return Intent("unsupported", "The authorized employee snapshot has no customer, order, historical, employment-date, or activity data for this request.")
+    # No location column exists. Naming a place ("Pune employees") must not silently become an unfiltered query.
+    if re.search(LOCATION_WORDS, q) or re.search(NAMED_GROUP, question):
+        return Intent("unsupported", "The authorized employee snapshot has no location data, and the named group is not a recorded department.")
     if re.search(r"\b(join|manager.s manager|manager.s salary|manager.s department|reporting chain|manager(?: employee)? id)\b", q):
         return Intent("unsupported", "No approved identity-based join or reporting-chain relationship is available. Recorded manager names are labels only.")
     if re.search(r"\b(best employee|manager performance|payroll|jane.s team)\b", q) or q in {"show managers", "list managers"}:
@@ -113,7 +125,8 @@ def analyze_intent(question: str, catalog, rules, user) -> Intent:
     if re.search(r"\btop\s+\w+\s+departments\b", q) and not metrics:
         return Intent("clarification", "Which metric should rank the departments: employee count, average recorded salary, or recorded salary total?")
     predicates = [predicate for rule in selected if rule.kind == "filter" for predicate in rule.predicates]
-    departments = [("Engineering", r"\bengineering\b"), ("HR", r"\bhr\b"), ("IT", r"\bit department\b|\bdepartment it\b")]
+    departments = [("Engineering", r"\bengineering\b"), ("HR", r"\bhr\b"),
+                   ("IT", r"\bit department\b|\bdepartment it\b|\b(?:in|from|for|of)\s+it\b(?!\s+(?:is|was|are|has|have))")]
     mentioned = [value for value, pattern in departments if re.search(pattern, q)]
     if len(mentioned) == 1:
         operation = exp.NEQ if re.search(r"\b(outside|excluding|except)\s+" + re.escape(mentioned[0].lower()), q) else exp.EQ
@@ -121,7 +134,8 @@ def analyze_intent(question: str, catalog, rules, user) -> Intent:
     name = re.search(r"(?:who is|what is|show|tell me) ([A-Za-z]+(?: [A-Za-z]+){1,3})(?:'s|’s) (.+?)[.?]?$", question.strip(), re.I)
     requested_columns = []
     if name:
-        predicates.append(exp.EQ(this=exp.column("NAME"), expression=exp.Literal.string(name.group(1))).sql(dialect="sqlite"))
+        # Stored names are capitalized; SQLite '=' is case-sensitive, so normalize the typed name.
+        predicates.append(exp.EQ(this=exp.column("NAME"), expression=exp.Literal.string(name.group(1).title())).sql(dialect="sqlite"))
         for pattern, column in ((r"manager|boss", "MANAGER_NAME"), (r"department", "DEPARTMENT"), (r"position|job title", "JOB_TITLE"), (r"salary", "SALARY")):
             if re.search(pattern, name.group(2), re.I):
                 requested_columns.append(column)

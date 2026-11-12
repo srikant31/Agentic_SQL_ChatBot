@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 import streamlit as st
 from sqlalchemy import create_engine, text
-from config import DB_URI
+from config import DB_URI, READONLY_DB_URI
 from rbac import require, visible_columns
 from safety import validate_readonly_sql
 from schema_context import get_catalog
@@ -26,6 +26,18 @@ SEED_ROWS = [
 def get_engine():
     return create_engine(DB_URI, pool_pre_ping=True, pool_recycle=280,
                          connect_args={"connect_timeout": 10, "read_timeout": 15, "write_timeout": 15})
+
+@st.cache_resource(show_spinner=False)
+def get_read_engine():
+    """Engine for the question-answering path (reflection and authorized snapshot reads only).
+
+    Uses the optional least-privilege account when MYSQL_READONLY_USER is set; otherwise falls back to
+    the existing engine so current deployments keep working. Writes always use get_engine().
+    """
+    if not READONLY_DB_URI:
+        return get_engine()
+    return create_engine(READONLY_DB_URI, pool_pre_ping=True, pool_recycle=280,
+                         connect_args={"connect_timeout": 10, "read_timeout": 15})
 
 def initialize_demo(engine=None):
     """Add isolated demo tables. Never alter or overwrite existing EMPLOYEES."""
@@ -53,7 +65,7 @@ def ensure_demo():
 
 def get_schema(user, engine=None):
     require(user, "query")
-    engine = engine if engine is not None else get_engine()
+    engine = engine if engine is not None else get_read_engine()
     return get_catalog(user, engine).render()
 
 def _authorized_rows(user, engine):
@@ -74,7 +86,7 @@ def _authorized_rows(user, engine):
 def run_query(sql, user=None, engine=None):
     require(user, "query")
     validate_readonly_sql(sql)
-    engine = engine if engine is not None else get_engine()
+    engine = engine if engine is not None else get_read_engine()
     validate_sql(sql, get_catalog(user, engine))
     columns, rows = _authorized_rows(user, engine)
     with sqlite3.connect(":memory:") as sandbox:

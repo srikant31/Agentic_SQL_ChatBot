@@ -2,6 +2,7 @@ import streamlit as st
 from theme import apply_theme
 from app_auth import require_login
 from database import ensure_demo, run_query, update_job_title, get_diagnostics
+from diagnostics import log_failure
 
 st.set_page_config(page_title="IT Admin · RBAC", page_icon="🔧", layout="wide")
 apply_theme()
@@ -11,7 +12,8 @@ st.caption("Only this role can save job-title changes. Salary changes, arbitrary
 try:
     ensure_demo()
     columns, rows = run_query("SELECT EMPLOYEE_ID, NAME, JOB_TITLE FROM EMPLOYEES ORDER BY EMPLOYEE_ID", user)
-except Exception:
+except Exception as exc:
+    log_failure("admin_load_failed", exc)
     st.error("Could not connect to the live demo data.")
     st.stop()
 records = {row[0]: row for row in rows}
@@ -32,7 +34,8 @@ if pending and pending.get("owner") == user.username:
             st.success("Saved to Aiven and recorded in the audit log.")
         except (ValueError, PermissionError) as exc:
             st.error(str(exc))
-        except Exception:
+        except Exception as exc:
+            log_failure("title_update_failed", exc)
             st.error("Could not save the change. No success has been recorded.")
 st.subheader("Live database check and audit log")
 if st.button("Check Aiven connection / refresh audit log"):
@@ -41,5 +44,6 @@ if st.button("Check Aiven connection / refresh audit log"):
         st.success(f"Aiven connection: {status['connection']} · {status['demo_rows']} demo rows")
         st.caption(f"Checked at {status['checked_at_utc']}")
         st.dataframe(status["recent_changes"], hide_index=True)
-    except Exception:
+    except Exception as exc:
+        log_failure("health_check_failed", exc)
         st.error("Database health check failed.")
