@@ -1,5 +1,7 @@
 import os
 import streamlit as st
+from observability import load_streamlit_settings
+load_streamlit_settings()  # before importing graph/model code; only copies present secrets
 from theme import apply_theme
 from app_auth import require_login
 from rbac import scope_description

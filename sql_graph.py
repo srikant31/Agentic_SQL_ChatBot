@@ -13,6 +13,7 @@ from rbac import require
 from safety import SchemaValidationError, UnsafeQueryError
 from semantic_validation import SemanticValidationError
 from sql_generator import provider_settings
+from coldchain_graph import build_graph
 
 
 class QueryState(TypedDict, total=False):
@@ -120,7 +121,7 @@ class SQLWorkflow:
         provider, _, _, _, model = provider_settings()
         self.config = {"configurable": {"thread_id": str(uuid.uuid4())}, "recursion_limit": 30,
                        "tags": ["sql-chatbot", "controlled-workflow"],
-                       "metadata": {"provider": provider, "model": model}}
+                       "metadata": {"provider": provider, "model": model, "role": self.user.role}}
         result = self.graph.invoke({"question": question, "attempts": 0}, self.config)
         self.pending = bool(result.get("__interrupt__"))
         return result
