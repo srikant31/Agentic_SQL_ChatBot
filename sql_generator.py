@@ -5,6 +5,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from utils import extract_text
+from observability import redacted_trace
 
 
 class LLMProviderError(RuntimeError):
@@ -29,11 +30,14 @@ def provider_settings() -> tuple[str, str, str, str, str]:
 
 def _build_llm(provider: str, model: str):
     if provider == "groq":
+        if not os.getenv("GROQ_API_KEY", "").strip():
+            raise ValueError("GROQ_API_KEY is required.")
         from langchain_groq import ChatGroq  # imported lazily so Gemini-only installs keep working
         return ChatGroq(temperature=0, model=model)
     return ChatGoogleGenerativeAI(temperature=0, model=model)
 
 
+@redacted_trace("generate_sql")
 def generate_sql(question: str, schema_text: str) -> dict:
     """
     Single call to the configured LLM (Gemini by default, or Groq via LLM_PROVIDER=groq): given the

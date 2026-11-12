@@ -3,6 +3,8 @@ from dotenv import load_dotenv
 from urllib.parse import quote_plus
 
 load_dotenv()
+from observability import load_streamlit_settings
+load_streamlit_settings()
 
 
 # Streamlit Cloud has no way to "upload" ca.pem alongside secrets — only

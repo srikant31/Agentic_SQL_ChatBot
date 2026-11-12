@@ -1,5 +1,29 @@
 # SQL Agent with LangChain
 
+LangSmith instrumentation and the opt-in controlled LangGraph workflow are documented in
+[LANGGRAPH_LANGSMITH.md](LANGGRAPH_LANGSMITH.md). Classic mode remains the default for baseline observation.
+
+## Use Groq locally
+
+The application supports Groq through `langchain-groq`. In your local, ignored `.env` file set:
+
+```dotenv
+LLM_PROVIDER=groq
+GROQ_API_KEY=paste_your_groq_key_here
+GROQ_LLM_MODEL=llama-3.3-70b-versatile
+```
+
+Install dependencies with `python -m pip install -r requirements-dev.txt`, then restart
+Streamlit. In Streamlit Cloud, put the same three settings in the app's Secrets settings.
+Never commit `.env` or paste a real key into documentation. `LLM_PROVIDER=gemini` remains
+available for switching back. SQL validation, RBAC and approval before execution apply to both providers.
+
+Provider-only smoke test (makes one real request but executes no SQL):
+
+```powershell
+.\venv\Scripts\python.exe -c "import config; from sql_generator import generate_sql; print(generate_sql('How many employees are there?', 'CREATE TABLE EMPLOYEES (EMPLOYEE_ID INTEGER, NAME TEXT);')['status'])"
+```
+
 **Current implementation:** schema intelligence, business-context BM25 retrieval, reviewed
 SQL examples and bounded semantic validation extend the role-authorized MySQL-to-SQLite
 workflow. See [SCHEMA_INTELLIGENCE.md](SCHEMA_INTELLIGENCE.md) for the current architecture,

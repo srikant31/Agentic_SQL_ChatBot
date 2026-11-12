@@ -1,7 +1,7 @@
 # Schema intelligence, retrieval and semantic validation
 
 The live path remains **MySQL → authorized rows/columns → private SQLite snapshot**.
-Gemini proposes SQL; the user must still click **Run this query**. No generated SQL is
+The configured LLM proposes SQL; the user must still click **Run this query**. No generated SQL is
 executed on MySQL. Existing login, explorer and confirmed job-title edits are preserved.
 
 ## Run and test
@@ -18,7 +18,10 @@ Use Python 3.12:
 .\venv\Scripts\python.exe scripts/evaluate.py --mode D --split all
 ```
 
-Only `rank-bm25==0.2.2` is new in the application dependencies. PyYAML, SQLAlchemy,
+The retrieval dependency is `rank-bm25==0.2.2`. Groq support adds `langchain-groq==1.1.3`
+and `groq==0.37.1`. Set `LLM_PROVIDER=groq`, `GROQ_API_KEY` and `GROQ_LLM_MODEL` in
+the local ignored `.env` file; see the README for setup. Gemini remains an optional fallback.
+PyYAML, SQLAlchemy,
 SQLGlot, PyMySQL and the Gemini adapter were already present. A separate dev requirement
 pins pytest. No vector database, additional server, model provider or live table is needed.
 
@@ -32,7 +35,7 @@ flowchart TD
     R --> J[Approved relationship expansion]
     J --> E[Eligible verified example retrieval]
     E --> A[Budgeted context assembly]
-    A --> G[Gemini SQL proposal]
+    A --> G[Configured LLM SQL proposal]
     G --> V[SQLite AST, identifier and semantic checks]
     V --> H[Human reviews query]
     H --> F[Fresh schema and context-version validation]
@@ -52,7 +55,7 @@ flowchart TD
 | `context_pipeline.py` | Context assembly, proposal generation and execution revalidation |
 | `safety.py` | One SQLite query, no nested writes/output/locks, identifier qualification |
 | `semantic_validation.py` | Supported metric, population/filter, grouping, ranking and join checks |
-| `sql_generator.py` | Single Gemini call and typed response parsing; no execution |
+| `sql_generator.py` | Single configured-provider call and typed response parsing; no execution |
 | `database.py` | Existing authorization and snapshot boundary; bounded source read |
 
 ### Physical and logical schema

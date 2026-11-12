@@ -11,6 +11,7 @@ from schema_context import get_catalog
 from semantic_validation import SemanticValidationError, validate_sql
 from sql_examples import EXAMPLES_PATH, eligible_examples, examples_version, load_examples, retrieve_examples
 import sql_generator
+from observability import redacted_trace
 
 CONTEXT_MAX_CHARACTERS = 18_000
 
@@ -22,6 +23,7 @@ def _engine(engine):
     return engine
 
 
+@redacted_trace("retrieve_analytics_context")
 def prepare_context(question, user, engine=None, *, catalog=None, mode="D", refresh=False,
                     rules_path=RULES_PATH, examples_path=EXAMPLES_PATH,
                     max_characters=CONTEXT_MAX_CHARACTERS) -> ContextPackage:
@@ -90,14 +92,19 @@ def prepare_context(question, user, engine=None, *, catalog=None, mode="D", refr
     return ContextPackage(selected_catalog, selected_rules, intent, hits, examples, version, prompt, tuple(warnings))
 
 
-def prepare_proposal(question, user, engine=None, *, mode="D", rules_path=RULES_PATH, examples_path=EXAMPLES_PATH):
+@redacted_trace("prepare_sql_proposal")
+def prepare_proposal(question, user, engine=None, *, mode="D", rules_path=RULES_PATH, examples_path=EXAMPLES_PATH,
+                     repair_feedback=""):
     started = time.perf_counter()
     context = prepare_context(question, user, engine, mode=mode, rules_path=rules_path, examples_path=examples_path)
     if context.intent.status != "query":
         return {"status": context.intent.status, "message": context.intent.message}
     # The full catalog's semantic rules are used even when optional prompt context was dropped.
     rules = load_business_rules(context.catalog, user, rules_path)
-    generated = sql_generator.generate_sql(question, context.prompt_context)
+    prompt_question = question
+    if repair_feedback:
+        prompt_question += "\nValidation feedback for a new proposal: " + repair_feedback
+    generated = sql_generator.generate_sql(prompt_question, context.prompt_context)
     if generated.get("status", "proposal") != "proposal":
         return generated
     validation = validate_sql(generated["sql"], context.catalog, context.intent, rules)
@@ -114,7 +121,8 @@ def prepare_proposal(question, user, engine=None, *, mode="D", rules_path=RULES_
             "preparation_seconds": round(time.perf_counter() - started, 4)}
 
 
-def execute_proposal(proposal, user, engine=None, *, rules_path=RULES_PATH, examples_path=EXAMPLES_PATH):
+@redacted_trace("validate_sql_proposal")
+def validate_proposal(proposal, user, engine=None, *, rules_path=RULES_PATH, examples_path=EXAMPLES_PATH):
     require(user, "query")
     if proposal.get("status") != "proposal" or proposal.get("owner") != user.username:
         raise PermissionError("The query proposal belongs to another session or is invalid.")
@@ -124,5 +132,12 @@ def execute_proposal(proposal, user, engine=None, *, rules_path=RULES_PATH, exam
     if context.intent.status != "query" or context.version != proposal.get("context_version"):
         raise SemanticValidationError("Schema, permissions or reviewed context changed. Generate and review a new proposal.")
     validate_sql(proposal["sql"], context.catalog, context.intent, load_business_rules(context.catalog, user, rules_path))
+    return context
+
+
+@redacted_trace("execute_authorized_snapshot")
+def execute_proposal(proposal, user, engine=None, *, rules_path=RULES_PATH, examples_path=EXAMPLES_PATH):
+    engine = _engine(engine)
+    validate_proposal(proposal, user, engine, rules_path=rules_path, examples_path=examples_path)
     from database import run_query
     return run_query(proposal["sql"], user, engine=engine)

@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 from theme import apply_theme
 from app_auth import require_login
@@ -60,6 +61,7 @@ with st.expander("Demonstrate a denied query"):
         except Exception as exc:
             show_query_error(exc)
 
+use_graph = st.sidebar.checkbox("Use controlled LangGraph workflow", value=os.getenv("SQL_WORKFLOW", "classic") == "graph")
 st.subheader("Ask the SQL assistant")
 st.caption("The AI proposes a read-only query. Review it before running it.")
 examples = ["Select a sample question...", "How many employees can I access?", "List all employees I can access with their department and job title.", "Who is Bob Brown's manager?", "Show average salary by department."]
@@ -75,10 +77,20 @@ if st.button("Generate SQL", type="primary", disabled=not question or remaining 
     st.session_state.pending_query = None
     try:
         with st.spinner("Writing SQL for your permitted schema..."):
-            result = prepare_proposal(question, user)
+            if use_graph:
+                from sql_graph import SQLWorkflow
+                workflow = SQLWorkflow(user)
+                st.session_state.sql_workflow = workflow
+                output = workflow.start(question, user)
+                if output.get("__interrupt__"):
+                    result = {**output["proposal"], "workflow": "graph", "review_key": workflow.config["configurable"]["thread_id"] + str(output["attempts"])}
+                else:
+                    result = {"status": output["status"], "message": output.get("message", "No query was proposed.")}
+            else:
+                result = prepare_proposal(question, user)
             if result["status"] == "proposal":
                 st.session_state.pending_query = result
-            elif result["status"] == "denied":
+            elif result["status"] in {"denied", "error"}:
                 st.error(result["message"])
             else:
                 st.info(result["message"])
@@ -107,9 +119,31 @@ if pending:
         st.write("Reviewed examples:", pending["context"]["examples"] or "None needed")
         for warning in (*pending["validation"]["warnings"], *pending["context"]["warnings"]):
             st.caption(warning)
+    edited_sql = pending["sql"]
+    if pending.get("workflow") == "graph":
+        edited_sql = st.text_area("Review or edit SQL", pending["sql"], key="review_" + pending["review_key"])
+        if st.button("Reject query"):
+            st.session_state.sql_workflow.resume("reject", user)
+            st.session_state.pending_query = None
+            del st.session_state.sql_workflow
+            st.info("Query rejected. Nothing was executed.")
+            st.stop()
     if st.button("Run this query", type="primary"):
         try:
-            columns, rows = execute_proposal(pending, user)
+            if pending.get("workflow") == "graph":
+                workflow = st.session_state.sql_workflow
+                output = workflow.resume("approve", user, edited_sql)
+                if output.get("__interrupt__"):
+                    st.session_state.pending_query = {**output["proposal"], "workflow": "graph", "review_key": workflow.config["configurable"]["thread_id"] + str(output["attempts"])}
+                    st.rerun()
+                if output.get("status") != "complete":
+                    st.session_state.pending_query = None
+                    st.error(output.get("message", "The workflow could not complete the query."))
+                    st.stop()
+                columns, rows = output["columns"], output["rows"]
+                del st.session_state.sql_workflow
+            else:
+                columns, rows = execute_proposal(pending, user)
             st.subheader("Results")
             st.dataframe([dict(zip(columns, row)) for row in rows], hide_index=True)
             st.caption(f"{len(rows)} result rows within your authorized scope.")

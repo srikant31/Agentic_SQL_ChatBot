@@ -43,6 +43,7 @@ def test_unknown_provider_is_rejected(monkeypatch):
 
 def test_groq_path_builds_groq_client_and_returns_proposal(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "test-key-not-a-real-credential")
     built = {}
 
     class FakeGroq:
@@ -62,6 +63,7 @@ def test_groq_path_builds_groq_client_and_returns_proposal(monkeypatch):
 
 def test_groq_errors_name_groq_not_gemini(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "test-key-not-a-real-credential")
 
     class PermissionDeniedError(Exception):
         pass
@@ -84,3 +86,13 @@ def test_missing_groq_key_gives_actionable_error(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "groq")  # real ChatGroq, no key set, no network call
     with pytest.raises(LLMProviderError, match="Check GROQ_API_KEY and GROQ_LLM_MODEL"):
         generate_sql("question", "schema")
+
+
+@pytest.mark.parametrize("key", ["", "   "])
+def test_blank_groq_key_never_constructs_a_network_client(monkeypatch, key):
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", key)
+    with patch("langchain_groq.ChatGroq") as client:
+        with pytest.raises(LLMProviderError, match="GROQ_API_KEY"):
+            generate_sql("question", "schema")
+        client.assert_not_called()

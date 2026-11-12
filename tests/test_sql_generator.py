@@ -5,6 +5,12 @@ import pytest
 from sql_generator import LLMProviderError, generate_sql
 
 
+@pytest.fixture(autouse=True)
+def isolate_provider(monkeypatch):
+    # These legacy response-parser tests mock Gemini; local .env settings must not switch them to a real provider.
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+
+
 def make_fake_response(text: str):
     """Builds a fake object mimicking what ChatGoogleGenerativeAI.invoke()
     returns, so we never make a real network call in tests — tests should

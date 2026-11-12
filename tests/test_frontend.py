@@ -87,3 +87,22 @@ def test_unsupported_question_shows_explanation_without_calling_provider():
         assert app.session_state["pending_query"] is None
         assert any("snapshot" in message.value for message in app.info)
         generate.assert_not_called()
+
+
+def test_graph_ui_preserves_approval_gate():
+    with patch("database.ensure_demo"), patch("sql_generator.generate_sql", return_value={
+        "sql": "SELECT COUNT(*) FROM EMPLOYEES", "explanation": "Count", "confidence": .9
+    }), patch("database.run_query", return_value=(["count"], [(3,)])) as execute:
+        app = AppTest.from_file(str(ROOT / "sqlapp.py"), default_timeout=20)
+        app.session_state["authenticated_username"] = "employee"
+        app.run()
+        next(box for box in app.checkbox if box.label == "Use controlled LangGraph workflow").check().run()
+        next(area for area in app.text_area if area.label == "...or type your own question:").set_value("How many employees can I access?").run()
+        next(button for button in app.button if button.label == "Generate SQL").click().run()
+        assert not app.exception
+        assert app.session_state["pending_query"]["workflow"] == "graph"
+        execute.assert_not_called()
+        next(button for button in app.button if button.label == "Run this query").click().run()
+        assert not app.exception
+        execute.assert_called_once()
+        assert app.session_state["pending_query"] is None
