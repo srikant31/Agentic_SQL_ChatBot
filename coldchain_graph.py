@@ -149,7 +149,7 @@ def build_graph(checkpointer, *, engine=None, llm=None, context_loader=None, exe
 
     def give_up(state):
         return {"refused": True, "status": "give_up", "approved": False, "rows": [],
-                "answer": "I could not produce a safe working query in three attempts. Please rephrase."}
+                "answer": "I could not produce a safe working query within the retry budget. Please rephrase."}
 
     def retry(state):
         if state.get("status") == "invalid" and state.get("attempts", 0) < 3:

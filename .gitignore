@@ -33,5 +33,7 @@ ca.pem
 
 # Generated local evaluation reports (not the reviewed dataset)
 /evaluation/offline_checks.json
+/coldchain-results.csv
+/eval_results.csv
 
 session-checklist.md
