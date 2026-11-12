@@ -1,5 +1,83 @@
 # SQL Agent with LangChain
 
+ColdChain's separate MySQL graph, optional PostgreSQL checkpoints, safe Aiven setup and
+64-case golden evaluation are documented in [COLDCHAIN_SETUP.md](COLDCHAIN_SETUP.md).
+
+## ColdChain graph and deployment
+
+```text
+question + history + authenticated role
+  -> classify (clarify / refuse / proceed)
+  -> generate MySQL SQL -> shared sql_guard validator
+  -> approval interrupt for sensitive customer/employee tables
+  -> fresh validation -> read-only MySQL execution -> grounded summary
+  -> at most three generation attempts for repairable validation/SQL errors
+```
+
+The ColdChain page uses a separately configured read-only source. The original employee
+SQLite-snapshot app remains available with its existing approval policy. `PG_URL` enables
+PostgreSQL checkpoints; otherwise an in-memory checkpoint and restart warning are used.
+Pending reviews reload from the URL's UUID, namespaced by the authenticated user and role.
+Reviewer edits are always revalidated. Evaluation-only autoapproval is isolated in the adapter.
+
+Secrets to add as needed (names only): `COLDCHAIN_DB_URL`, `EVAL_DB_URL`, `PG_URL`,
+`COLDCHAIN_ADMIN_USERS`, `GROQ_API_KEY`, `GROQ_LLM_MODEL`, `LLM_PROVIDER`,
+`LANGSMITH_API_KEY`, `LANGSMITH_TRACING`, `LANGSMITH_PROJECT`, `LANGSMITH_HIDE_INPUTS`,
+`LANGSMITH_HIDE_OUTPUTS`. Keep existing `MYSQL_*` and `AIVEN_CA_CERT` settings.
+Both `.env` and `.streamlit/secrets.toml` are gitignored. Never commit real URLs or keys.
+
+From the repository root, after provisioning a **new** ColdChain fixture database:
+
+```powershell
+python golden_eval/run_eval.py --predictor oracle:gold --validator sql_guard:validate
+python golden_eval/run_eval.py --predictor adapter:predict --validator sql_guard:validate --sleep 2
+```
+
+### Known limitations
+
+- No ColdChain database or PostgreSQL checkpoint URL was configured during implementation;
+  live oracle scores and PostgreSQL restart durability remain unverified.
+- The fixed date `2026-06-30` belongs to the supplied benchmark, not the real current date.
+- SQL safety and glossary grounding do not prove result correctness; compare returned rows
+  against the immutable golden queries before making accuracy claims.
+- Public demo accounts must be replaced before connecting private data; new-domain admin
+  access is explicitly allowlisted instead of inherited from the demo IT-admin role.
+- Checkpoints persist rows/history. Secure PostgreSQL access and retention separately.
+- The supplied raw schema contains DROP statements. Use the refusal-to-overwrite setup helper
+  described in the setup guide, never the existing employee database.
+
+LangSmith instrumentation and the opt-in controlled LangGraph workflow are documented in
+[LANGGRAPH_LANGSMITH.md](LANGGRAPH_LANGSMITH.md). Classic mode remains the default for baseline observation.
+
+## Use Groq locally
+
+The application supports Groq through `langchain-groq`. In your local, ignored `.env` file set:
+
+```dotenv
+LLM_PROVIDER=groq
+GROQ_API_KEY=paste_your_groq_key_here
+GROQ_LLM_MODEL=llama-3.3-70b-versatile
+```
+
+Install dependencies with `python -m pip install -r requirements-dev.txt`, then restart
+Streamlit. In Streamlit Cloud, put the same three settings in the app's Secrets settings.
+Never commit `.env` or paste a real key into documentation. `LLM_PROVIDER=gemini` remains
+available for switching back. SQL validation, RBAC and approval before execution apply to both providers.
+
+Provider-only smoke test (makes one real request but executes no SQL):
+
+```powershell
+.\venv\Scripts\python.exe -c "import config; from sql_generator import generate_sql; print(generate_sql('How many employees are there?', 'CREATE TABLE EMPLOYEES (EMPLOYEE_ID INTEGER, NAME TEXT);')['status'])"
+```
+
+**Current implementation:** schema intelligence, business-context BM25 retrieval, reviewed
+SQL examples and bounded semantic validation extend the role-authorized MySQL-to-SQLite
+workflow. See [SCHEMA_INTELLIGENCE.md](SCHEMA_INTELLIGENCE.md) for the current architecture,
+review process, tests and evaluation commands; some historical walkthroughs below describe
+earlier versions.
+
+Detailed implementation log: [12/11/2026](12-11-2026.md), including feature internals, code excerpts and verification results.
+
 A hands-on project exploring how to connect Large Language Models to relational
 databases — starting from raw `sqlite3`, moving through `SQLAlchemy` as a
 universal database connector, and finally building a working **SQL Agent**
@@ -306,3 +384,4 @@ larger commits rather than a granular step-by-step history.*
 - **Deployment**: Streamlit Community Cloud, with the SSL certificate and
   credentials handled through the platform's secrets manager rather than a
   local file.
+git add pages/roadmap.py README.md .gitignore

@@ -1,0 +1,130 @@
+version: 1
+rules:
+  - id: employee_grain
+    kind: definition
+    version: 1
+    status: approved
+    owner: project-maintainer
+    description: One row represents one authorized employee. EMPLOYEE_ID is the identity key. Never join on employee or manager names; these labels need not be unique.
+    aliases: [employee, staff, people, headcount, manager, boss]
+    columns: [EMPLOYEES.EMPLOYEE_ID, EMPLOYEES.NAME, EMPLOYEES.MANAGER_NAME]
+  - id: authorized_scope
+    kind: definition
+    version: 1
+    status: approved
+    owner: project-maintainer
+    description: Results describe the authorized snapshot only. Missing rows cannot establish absence from the whole organization. MANAGER_NAME is a recorded label and not a foreign key.
+    aliases: [visible, permitted, authorized, scope, direct reports]
+    columns: [EMPLOYEES.EMPLOYEE_ID]
+  - id: department
+    kind: dimension
+    version: 1
+    status: approved
+    owner: project-maintainer
+    description: Department is the recorded DEPARTMENT field, not the manager's department.
+    aliases: [department, departments, engineering, hr, it]
+    columns: [EMPLOYEES.DEPARTMENT]
+  - id: job_title
+    kind: dimension
+    version: 1
+    status: approved
+    owner: project-maintainer
+    description: Job title and position refer to JOB_TITLE. A managerial title does not establish reporting relationships.
+    aliases: [job title, job titles, position, positions]
+    columns: [EMPLOYEES.JOB_TITLE]
+  - id: employee_count
+    kind: metric
+    version: 1
+    status: approved
+    owner: project-maintainer
+    description: Visible employee count is COUNT(*) over authorized employee rows, independent of nullable attribute values.
+    aliases: [how many employees, count employees, count all employees, employee count, number of employees, number of staff, headcount, staff count, count direct reports, count people reporting]
+    columns: [EMPLOYEES.EMPLOYEE_ID]
+    aggregate: COUNT
+    field: '*'
+  - id: salary_units
+    kind: definition
+    version: 1
+    status: approved
+    owner: project-maintainer
+    permission: salary
+    description: SALARY contains fictional recorded integer values. Currency and pay period are unspecified. Do not call them monthly payroll, annual pay, net compensation or revenue.
+    aliases: [salary, salaries, pay, compensation, wage]
+    columns: [EMPLOYEES.SALARY]
+  - id: manager_label_count
+    kind: metric
+    version: 1
+    status: approved
+    owner: project-maintainer
+    description: Distinct recorded manager label count is COUNT(DISTINCT MANAGER_NAME), which ignores NULLs. Labels do not establish unique manager identities.
+    aliases: [count distinct recorded manager labels, count distinct manager labels, how many distinct recorded manager labels]
+    columns: [EMPLOYEES.MANAGER_NAME]
+    aggregate: COUNT
+    field: MANAGER_NAME
+    distinct: true
+  - id: recorded_salary_total
+    kind: metric
+    version: 1
+    status: approved
+    owner: project-maintainer
+    permission: salary
+    description: Recorded salary total is SUM(SALARY), once per selected employee. SUM(DISTINCT SALARY) is incorrect when employees have equal salaries.
+    aliases: [total salary, total salaries, salary total, total recorded salary, recorded salary total, sum of salaries, sum of recorded salaries, sum salary]
+    columns: [EMPLOYEES.SALARY]
+    aggregate: SUM
+    field: SALARY
+    unit: unspecified
+    time_basis: unspecified
+  - id: average_recorded_salary
+    kind: metric
+    version: 1
+    status: approved
+    owner: project-maintainer
+    permission: salary
+    description: Average recorded salary is AVG(SALARY), not SUM(SALARY) or an average of departmental averages.
+    aliases: [average salary, average salaries, average recorded salary, average recorded salaries, mean salary, mean salaries, mean recorded salary]
+    columns: [EMPLOYEES.SALARY]
+    aggregate: AVG
+    field: SALARY
+    unit: unspecified
+    time_basis: unspecified
+  - id: minimum_recorded_salary
+    kind: metric
+    version: 1
+    status: approved
+    owner: project-maintainer
+    permission: salary
+    description: Minimum recorded salary is MIN(SALARY).
+    aliases: [minimum salary, minimum recorded salary, lowest salary]
+    columns: [EMPLOYEES.SALARY]
+    aggregate: MIN
+    field: SALARY
+  - id: maximum_recorded_salary
+    kind: metric
+    version: 1
+    status: approved
+    owner: project-maintainer
+    permission: salary
+    description: Maximum recorded salary is MAX(SALARY).
+    aliases: [maximum salary, maximum recorded salary, highest recorded salary, highest salary]
+    columns: [EMPLOYEES.SALARY]
+    aggregate: MAX
+    field: SALARY
+  - id: exclude_missing_manager
+    kind: filter
+    version: 1
+    status: approved
+    owner: project-maintainer
+    description: When explicitly requested, exclude NULL or whitespace-only recorded manager labels. This is not proof that an employee has no actual manager.
+    aliases: [excluding employees with no recorded manager, exclude missing managers, excluding missing managers, manager is missing, manager is not missing, excluding employees whose recorded manager is missing, excluding missing manager labels]
+    columns: [EMPLOYEES.MANAGER_NAME]
+    predicates: ["MANAGER_NAME IS NOT NULL", "TRIM(MANAGER_NAME) <> ''"]
+  - id: exclude_ceo_placeholder
+    kind: filter
+    version: 1
+    status: approved
+    owner: project-maintainer
+    description: Only when explicitly requested, exclude the recorded CEO placeholder with UPPER(TRIM(MANAGER_NAME)) <> 'CEO'. This does not classify an employee's actual role.
+    aliases: [excluding the ceo placeholder, exclude ceo placeholder, or the ceo placeholder, and the ceo placeholder]
+    columns: [EMPLOYEES.MANAGER_NAME]
+    predicates: ["UPPER(TRIM(MANAGER_NAME)) <> 'CEO'"]
