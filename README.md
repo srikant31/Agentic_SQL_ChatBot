@@ -6,6 +6,8 @@ workflow. See [SCHEMA_INTELLIGENCE.md](SCHEMA_INTELLIGENCE.md) for the current a
 review process, tests and evaluation commands; some historical walkthroughs below describe
 earlier versions.
 
+Detailed implementation log: [12/11/2026](12-11-2026.md), including feature internals, code excerpts and verification results.
+
 A hands-on project exploring how to connect Large Language Models to relational
 databases — starting from raw `sqlite3`, moving through `SQLAlchemy` as a
 universal database connector, and finally building a working **SQL Agent**
@@ -312,3 +314,4 @@ larger commits rather than a granular step-by-step history.*
 - **Deployment**: Streamlit Community Cloud, with the SSL certificate and
   credentials handled through the platform's secrets manager rather than a
   local file.
+git add pages/roadmap.py README.md .gitignore
