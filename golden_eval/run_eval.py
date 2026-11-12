@@ -29,6 +29,14 @@ from decimal import Decimal, ROUND_HALF_UP
 from itertools import product as iproduct
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+HERE = str(Path(__file__).resolve().parent)
+if HERE not in sys.path:
+    sys.path.insert(1, HERE)
+import config  # dotenv/secrets are loaded only for the explicit CLI invocation
+
 import sqlglot
 from sqlglot import exp
 from sqlalchemy import create_engine, text
@@ -40,49 +48,8 @@ ROLE_DENY_COLUMNS = {"viewer": {"email", "salary_inr"}, "admin": set()}
 SET_OPS = tuple(c for c in (getattr(exp, "SetOperation", None), getattr(exp, "Union", None)) if c)
 
 
-# ---------------------------------------------------------------- validator
-def default_validator(sql: str, role: str = "viewer", limit: int = 100) -> str:
-    """Return a safe, LIMITed single SELECT or raise ValueError. Replace with your app's own validator."""
-    try:
-        stmts = [s for s in sqlglot.parse(sql, read="mysql") if s is not None]
-    except Exception as e:  # unparseable
-        raise ValueError(f"cannot parse SQL: {e}")
-    if len(stmts) != 1:
-        raise ValueError("exactly one statement allowed")
-    stmt = stmts[0]
-    if not isinstance(stmt, (exp.Select,) + SET_OPS):
-        raise ValueError(f"only SELECT allowed, got {type(stmt).__name__}")
-    if stmt.find(exp.Into):
-        raise ValueError("SELECT ... INTO is not allowed")
-    cte_names = {c.alias_or_name.lower() for c in stmt.find_all(exp.CTE)}
-    tables = set()
-    for t in stmt.find_all(exp.Table):
-        name = t.name.lower()
-        if name in cte_names:
-            continue
-        if t.db and t.db.lower() not in ("", "coldchain"):
-            raise ValueError(f"schema not allowed: {t.db}")
-        tables.add(name)
-    bad = tables - ALLOWED_TABLES
-    if bad:
-        raise ValueError(f"tables not allowed: {sorted(bad)}")
-    denied = tables & ROLE_DENY_TABLES.get(role, set())
-    if denied:
-        raise ValueError(f"role '{role}' may not read {sorted(denied)}")
-    cols = {c.name.lower() for c in stmt.find_all(exp.Column)}
-    if cols & ROLE_DENY_COLUMNS.get(role, set()):
-        raise ValueError(f"role '{role}' may not read columns {sorted(cols & ROLE_DENY_COLUMNS[role])}")
-    if role == "viewer" and "customers" in tables:  # projection stars only; COUNT(*) is fine
-        for sel in stmt.find_all(exp.Select):
-            if any(isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star))
-                   for e in sel.expressions):
-                raise ValueError("SELECT * on customers would expose PII")
-    if isinstance(stmt, exp.Select):
-        if not stmt.args.get("limit"):
-            stmt = stmt.limit(limit)
-    else:  # UNION etc.: wrap so the cap applies to the whole result
-        stmt = exp.select("*").from_(stmt.subquery("capped")).limit(limit)
-    return stmt.sql(dialect="mysql")
+# Shared production guard; gold/schema/seed remain immutable.
+from sql_guard import validate as default_validator
 
 
 # ---------------------------------------------------------------- result comparison

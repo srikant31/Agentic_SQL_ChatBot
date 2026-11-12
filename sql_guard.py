@@ -75,6 +75,9 @@ def inspect_query(sql, role="viewer"):
             raise ValueError("Viewer may not read sensitive columns.")
         if "customers" in tables:
             for select in stmt.find_all(exp.Select):
+                source = select.args.get("from_")
+                if select is stmt and source and isinstance(source.this, exp.Subquery) and isinstance(source.this.this, exp.Union):
+                    continue  # generated UNION cap; inner projections/columns remain checked
                 if any(isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star)) for item in select.expressions):
                     raise ValueError("Projection stars can expose customer PII; COUNT(*) is allowed.")
     try:
