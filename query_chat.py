@@ -91,6 +91,36 @@ def record_result(request, columns=None, rows=None, error=None):
         entry["columns"], entry["rows"] = list(columns), list(rows)
 
 
+def previous_sql(request, entry):
+    """SQL this proposal should be compared with: the failed SQL for a repair, else the previous version."""
+    proposal = entry.get("proposal") or {}
+    if proposal.get("repaired_from"):
+        return proposal["repaired_from"], "What the automatic repair changed"
+    if not entry.get("version"):
+        return None, None
+    messages = request["messages"]
+    for earlier in reversed(messages[:messages.index(entry)]):
+        if earlier.get("proposal"):
+            return earlier["proposal"]["sql"], "What changed from the previous version"
+    return None, None
+
+
+def render_changes(st, title, old_sql, new_sql):
+    from query_insight import compare, sql_diff
+    result = compare(old_sql, new_sql)
+    if result is None:
+        return
+    st.markdown(f"**{title}**")
+    if result["changes"]:
+        st.markdown("\n".join("- " + change for change in result["changes"]))
+    else:
+        st.markdown("- The query logic is unchanged (only wording or formatting differs).")
+    if result["unchanged"]:
+        st.caption("Unchanged: " + "; ".join(result["unchanged"]))
+    with st.expander("Show SQL changes"):
+        st.code(sql_diff(old_sql, new_sql), language="diff")
+
+
 def render_insight(st, insight, ai_explanation, sql):
     """Plain-English description written by code from the SQL, then rules, assumptions, AI text and SQL."""
     st.markdown("**What this query will fetch**")
@@ -137,6 +167,9 @@ def render_conversation(chat, prefix, *, run_label="Run this query", can_generat
                     if entry["version"]:
                         st.caption("Updated request: " + entry["question"])
                     st.caption(f"Original proposal" if not entry["version"] else f"Rewrite {entry['version']} of {MAX_REWRITES}")
+                    old_sql, title = previous_sql(request, entry)
+                    if old_sql:
+                        render_changes(st, title, old_sql, proposal["sql"])
                     if insight:
                         render_insight(st, insight, entry["text"], proposal["sql"])
                     else:

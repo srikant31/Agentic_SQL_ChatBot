@@ -68,12 +68,20 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
                                  "version": request["rewrites"]}}
         return call_cfg, str(run_id)
 
-    def insight_detail(insight):
-        """Compact record of the rule checks for the log (the full text is recomputable from the SQL)."""
-        if not insight:
-            return None
-        return {"rules": [{"term": r["term"], "score": r["score"]} for r in insight["rules"]],
-                "assumptions": insight["assumptions"]}
+    def insight_detail(insight, old_sql=None, new_sql=None):
+        """Compact record for the log: rules shown, assumptions, and what changed from the previous SQL."""
+        detail = {}
+        if insight:
+            detail.update(rules=[{"term": r["term"], "score": r["score"]} for r in insight["rules"]],
+                          assumptions=insight["assumptions"])
+        if old_sql and new_sql:
+            comparison = query_insight.compare(old_sql, new_sql)
+            if comparison is not None:
+                detail["changes"] = comparison["changes"]
+        return detail or None
+
+    def last_proposal_sql(request):
+        return next((m["proposal"]["sql"] for m in reversed(request["messages"]) if m.get("proposal")), None)
 
     def log(event, request, version=None, **fields):
         feedback_store.record(event, **who, request_id=request["id"],
@@ -132,13 +140,15 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
                               state="complete")
                 calls = output.get("model_calls", 0) + extra_calls
                 if output.get("__interrupt__"):
+                    earlier_sql = last_proposal_sql(request)
                     insight = query_insight.analyze(request["current_question"], output["sql"])
                     add_response(request, proposal={"sql": output["sql"], "explanation": output["explanation"],
                         "owner": user.username, "request_id": request["id"], "revision": request["rewrites"],
                         "trace_id": run_id, "insight": insight})
                     log("proposal", request, status="proposed", model_calls=calls, latency_ms=elapsed(),
                         langsmith_run_id=run_id, question=request["current_question"],
-                        sql=output["sql"], explanation=output["explanation"], detail=insight_detail(insight))
+                        sql=output["sql"], explanation=output["explanation"],
+                        detail=insight_detail(insight, earlier_sql, output["sql"]))
                 else:
                     add_response(request, message=output.get("answer", "No query was proposed."),
                                  error=output.get("status") in {"error", "give_up", "provider_error", "source_error"})
@@ -172,8 +182,9 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
                 # The database rejected the SQL and one automatic repair produced new SQL. Changed SQL always
                 # needs a fresh approval, so show it as the same version (not a user rewrite) and stop here.
                 entry = latest_response(request)
+                failed_sql = entry["proposal"]["sql"]
                 entry["proposal"] = {**entry["proposal"], "sql": output["sql"], "explanation": output["explanation"],
-                                     "trace_id": run_id, "repaired": True,
+                                     "trace_id": run_id, "repaired": True, "repaired_from": failed_sql,
                                      "insight": query_insight.analyze(request["current_question"], output["sql"])}
                 entry["text"], entry["notice"], entry["vote"] = output["explanation"], REPAIRED_NOTICE, None
                 # No checkpoint write here: updating state while paused would re-queue the approval step and
@@ -182,7 +193,7 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
                 log("proposal", request, status="repaired", model_calls=max(output.get("model_calls", before) - before, 0),
                     latency_ms=int((time.perf_counter() - started) * 1000), langsmith_run_id=run_id,
                     question=request["current_question"], sql=output["sql"], explanation=output["explanation"],
-                    detail=insight_detail(entry["proposal"]["insight"]))
+                    detail=insight_detail(entry["proposal"]["insight"], failed_sql, output["sql"]))
                 return
             calls = max(output.get("model_calls", before) - before, 0)
             if output.get("status") != "complete":

@@ -35,6 +35,8 @@ def _step(item):
         detail = {}
     if detail.get("rules"):
         st.caption("Business rules shown: " + ", ".join(r["term"] for r in detail["rules"]))
+    if detail.get("changes"):
+        st.caption("Changed from previous version: " + "; ".join(detail["changes"]))
     facts = {key: item.get(key) for key in ("model_calls", "latency_ms", "rows_returned", "langsmith_run_id")
              if item.get(key) is not None}
     if facts:
