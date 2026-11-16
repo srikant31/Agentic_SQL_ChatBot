@@ -61,7 +61,7 @@ def get_schema_context(question="", role="viewer", engine=None):
                             "primary_key": inspector.get_pk_constraint(table).get("constrained_columns"),
                             "relationships": foreign_keys})
     glossary = (Path(__file__).parent / "golden_eval/business_glossary.md").read_text(encoding="utf-8")
-    return {"schema": schema, "database": engine.url.database or "coldchain",
+    return {"schema": schema, "database": engine.url.database or "coldchain", "records": records,
             "text": "Evaluation date: 2026-06-30. Never use NOW() or CURDATE().\n"
                     + json.dumps(records, default=str) + "\n" + glossary
                     + ("\n" + outside_scope_text(role) if outside_scope_text(role) else "")}
