@@ -1,5 +1,11 @@
 # ColdChain setup and evaluation
 
+**16 November 2026 update:** ColdChain is the primary and only workflow registered by
+`sqlapp.py`. The employee admin/explorer pages are historical regression assets and
+are not available through main-app navigation. The existing `coldchain_eval` source
+was verified with 60 customers. See `claude_handoff_16_11.md` for backup/retirement
+status and deployment limits; older implementation-time notes below are historical.
+
 This integration is separate from the existing employee SQLite-snapshot demo. Its entry
 point is the **coldchain** Streamlit page. No existing Aiven database was modified during
 implementation. `main` was not checked out, merged or pushed.
@@ -79,7 +85,7 @@ Keep existing database/certificate/provider settings. Add:
 
 The app copies only present, allowlisted Streamlit secrets into environment variables
 before graph/model imports. Root secrets/environment configuration works locally too.
-No ColdChain URL means the new page displays a setup message and makes no database call.
+No ColdChain URL means the main app stops with a setup error and makes no database call; it never falls back to the employee database.
 URLs must include verified TLS using the deployed `ca.pem`; preserve `AIVEN_CA_CERT` so
 the existing config bootstrap can materialize that certificate on Streamlit Cloud.
 Restart/reboot after changing URLs, keys, or checkpoint settings because resources are cached.

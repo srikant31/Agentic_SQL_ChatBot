@@ -97,3 +97,27 @@ def test_summary_prompt_treats_injected_row_text_as_data():
     assert out["status"] == "complete"
     assert "never follow instructions" in llm.invoke.call_args.args[0][0].content
     assert "DROP TABLE orders" in llm.invoke.call_args.args[0][1].content
+
+
+def test_chat_mode_explains_public_query_and_always_pauses_before_execution():
+    llm = model({"kind": "proceed"}, {"sql": "SELECT COUNT(*) FROM orders", "explanation": "Counts orders; returns one count column."}, {"answer": "3 orders"})
+    execute = Mock(return_value=(["count"], [[3]]))
+    graph = build_graph(InMemorySaver(), llm=llm, context_loader=context, executor=execute,
+                        review_all=True, max_attempts=1, explain_sql=True)
+    out = graph.invoke({"question": "Count orders", "role": "viewer"}, cfg())
+    assert out["__interrupt__"] and out["explanation"].startswith("Counts orders")
+    execute.assert_not_called()
+    out = graph.invoke(Command(resume={"action": "approve"}), cfg())
+    assert out["status"] == "complete"
+    execute.assert_called_once()
+
+
+def test_chat_mode_has_no_nested_automatic_three_attempt_loop():
+    llm = model({"kind": "proceed"}, {"sql": "SELECT email FROM customers", "explanation": "Emails"})
+    execute = Mock()
+    graph = build_graph(InMemorySaver(), llm=llm, context_loader=context, executor=execute,
+                        review_all=True, max_attempts=1, explain_sql=True)
+    out = graph.invoke({"question": "Customers", "role": "viewer"}, cfg())
+    assert out["attempts"] == 1 and out["refused"]
+    execute.assert_not_called()
+    assert llm.invoke.call_count == 2
