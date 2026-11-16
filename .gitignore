@@ -40,3 +40,7 @@ session-checklist.md
 
 # Local feedback event store (fictional usage data)
 /data/
+
+# Reports written by scripts/full_check.py
+/full_check_report.md
+/full_check_report.json
