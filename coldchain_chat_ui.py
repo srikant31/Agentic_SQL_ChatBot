@@ -8,6 +8,7 @@ from langgraph.types import Command
 from config import MAX_QUESTIONS_PER_SESSION
 from diagnostics import log_failure
 import feedback_store
+import query_insight
 import prompt_log
 import sql_generator
 from observability import send_feedback
@@ -42,7 +43,8 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
             if pending and state.get("sql"):
                 add_response(request, proposal={"sql": state["sql"],
                     "explanation": state.get("explanation") or "This saved query reads the displayed columns from your authorized ColdChain data. Review the SQL before running it.",
-                    "owner": user.username, "request_id": request["id"], "revision": request["rewrites"]})
+                    "owner": user.username, "request_id": request["id"], "revision": request["rewrites"],
+                    "insight": query_insight.analyze(request["current_question"], state["sql"])})
             else:
                 add_response(request, message=state.get("answer") or "The previous request was interrupted. No new query was run; you can describe your modifications or start a new question.")
                 if state.get("status") == "complete":
@@ -65,6 +67,13 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
                     "metadata": {**cfg.get("metadata", {}), "step": name, "request_id": request["id"],
                                  "version": request["rewrites"]}}
         return call_cfg, str(run_id)
+
+    def insight_detail(insight):
+        """Compact record of the rule checks for the log (the full text is recomputable from the SQL)."""
+        if not insight:
+            return None
+        return {"rules": [{"term": r["term"], "status": r["status"]} for r in insight["rules"]],
+                "assumptions": insight["assumptions"]}
 
     def log(event, request, version=None, **fields):
         feedback_store.record(event, **who, request_id=request["id"],
@@ -123,12 +132,13 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
                               state="complete")
                 calls = output.get("model_calls", 0) + extra_calls
                 if output.get("__interrupt__"):
+                    insight = query_insight.analyze(request["current_question"], output["sql"])
                     add_response(request, proposal={"sql": output["sql"], "explanation": output["explanation"],
                         "owner": user.username, "request_id": request["id"], "revision": request["rewrites"],
-                        "trace_id": run_id})
+                        "trace_id": run_id, "insight": insight})
                     log("proposal", request, status="proposed", model_calls=calls, latency_ms=elapsed(),
                         langsmith_run_id=run_id, question=request["current_question"],
-                        sql=output["sql"], explanation=output["explanation"])
+                        sql=output["sql"], explanation=output["explanation"], detail=insight_detail(insight))
                 else:
                     add_response(request, message=output.get("answer", "No query was proposed."),
                                  error=output.get("status") in {"error", "give_up", "provider_error", "source_error"})
@@ -163,14 +173,16 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
                 # needs a fresh approval, so show it as the same version (not a user rewrite) and stop here.
                 entry = latest_response(request)
                 entry["proposal"] = {**entry["proposal"], "sql": output["sql"], "explanation": output["explanation"],
-                                     "trace_id": run_id, "repaired": True}
+                                     "trace_id": run_id, "repaired": True,
+                                     "insight": query_insight.analyze(request["current_question"], output["sql"])}
                 entry["text"], entry["notice"], entry["vote"] = output["explanation"], REPAIRED_NOTICE, None
                 # No checkpoint write here: updating state while paused would re-queue the approval step and
                 # drop the pending interrupt. After a refresh, the restore path rebuilds this proposal from
                 # the graph's pending SQL.
                 log("proposal", request, status="repaired", model_calls=max(output.get("model_calls", before) - before, 0),
                     latency_ms=int((time.perf_counter() - started) * 1000), langsmith_run_id=run_id,
-                    question=request["current_question"], sql=output["sql"], explanation=output["explanation"])
+                    question=request["current_question"], sql=output["sql"], explanation=output["explanation"],
+                    detail=insight_detail(entry["proposal"]["insight"]))
                 return
             calls = max(output.get("model_calls", before) - before, 0)
             if output.get("status") != "complete":

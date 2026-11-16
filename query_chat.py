@@ -91,6 +91,33 @@ def record_result(request, columns=None, rows=None, error=None):
         entry["columns"], entry["rows"] = list(columns), list(rows)
 
 
+ICONS = {"ok": "✅", "warn": "⚠️", "info": "ℹ️"}
+
+
+def render_insight(st, insight, ai_explanation, sql):
+    """Plain-English description written by code from the SQL, then rules, assumptions, AI text and SQL."""
+    st.markdown("**What this query will fetch**")
+    st.markdown("\n".join(("    - " + line.strip()) if line.startswith("    ") else ("- " + line)
+                           for line in insight["summary"]))
+    rules = insight.get("rules") or []
+    if rules:
+        broken = [rule for rule in rules if rule["status"] == "warn"]
+        if broken:
+            st.warning(f"{len(broken)} business rule{'s' if len(broken) > 1 else ''} may not be followed. "
+                       "Check below before approving, or ask for changes.")
+        st.markdown("**Rules applied**")
+        for rule in rules:
+            st.markdown(f"{ICONS[rule['status']]} **{rule['term']}**" + (f": {rule['detail']}" if rule.get("detail") else ""))
+            st.caption("Rule: " + rule["definition"])
+    if insight.get("assumptions"):
+        st.markdown("**Assumptions**")
+        st.markdown("\n".join("- " + item for item in insight["assumptions"]))
+    with st.expander("How the AI described it"):
+        st.write(ai_explanation)
+    with st.expander("Show SQL"):
+        st.code(sql, language="sql")
+
+
 def render_conversation(chat, prefix, *, run_label="Run this query", can_generate=True):
     """Render saved messages and return a single latest-response UI event."""
     import streamlit as st
@@ -102,9 +129,10 @@ def render_conversation(chat, prefix, *, run_label="Run this query", can_generat
             with st.chat_message(entry["role"]):
                 if entry.get("kind") == "modification":
                     st.caption("Requested changes")
+                insight = (entry.get("proposal") or {}).get("insight")
                 if entry.get("kind") == "error":
                     st.error(entry["text"])
-                else:
+                elif not insight:
                     st.write(entry["text"])
                 if entry.get("notice"):
                     st.info(entry["notice"])
@@ -113,7 +141,10 @@ def render_conversation(chat, prefix, *, run_label="Run this query", can_generat
                     if entry["version"]:
                         st.caption("Updated request: " + entry["question"])
                     st.caption(f"Original proposal" if not entry["version"] else f"Rewrite {entry['version']} of {MAX_REWRITES}")
-                    st.code(proposal["sql"], language="sql")
+                    if insight:
+                        render_insight(st, insight, entry["text"], proposal["sql"])
+                    else:
+                        st.code(proposal["sql"], language="sql")
                     if proposal.get("validation"):
                         with st.expander("Context and validation"):
                             st.write("Checks passed:", proposal["validation"]["checks"])

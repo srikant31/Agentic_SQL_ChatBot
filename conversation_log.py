@@ -29,6 +29,13 @@ def _step(item):
         st.code(item["sql"], language="sql")
     if item.get("message"):
         st.write("Shown to user:", item["message"])
+    try:
+        detail = json.loads(item["detail"]) if item.get("detail") else {}
+    except ValueError:
+        detail = {}
+    if detail.get("rules"):
+        marks = {"ok": "✅", "warn": "⚠️", "info": "ℹ️"}
+        st.caption("Rules: " + ", ".join(f"{marks.get(r['status'], '')} {r['term']}" for r in detail["rules"]))
     facts = {key: item.get(key) for key in ("model_calls", "latency_ms", "rows_returned", "langsmith_run_id")
              if item.get(key) is not None}
     if facts:
