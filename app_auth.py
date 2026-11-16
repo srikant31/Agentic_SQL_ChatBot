@@ -3,9 +3,11 @@ import streamlit as st
 from rbac import USERS, authenticate, require, scope_description
 
 def coldchain_role(user):
-    """New-domain sensitive access is explicit, never inherited from employee roles."""
+    """ColdChain department for this account. Admin is explicit (COLDCHAIN_ADMIN_USERS allowlist) and is
+    never inherited from an account; everyone else gets their account's department."""
+    from departments import ACCOUNT_DEPARTMENTS
     admins = {name.strip() for name in os.getenv("COLDCHAIN_ADMIN_USERS", "").split(",") if name.strip()}
-    return "admin" if user.username in admins else "viewer"
+    return "admin" if user.username in admins else ACCOUNT_DEPARTMENTS.get(user.username, "viewer")
 
 
 def require_login(permission="query", *, domain="employee"):
@@ -14,15 +16,16 @@ def require_login(permission="query", *, domain="employee"):
     if user is None:
         st.title("ColdChain SQL Agent" if coldchain else "SQL Agent · RBAC Demo")
         st.caption("Public interview demo. Accounts and records are fictional and intentionally shared.")
+        accounts = [("employee", "employee123", "Engineering department only; no salaries; no edits"),
+                    ("hr", "hr123", "All departments and salaries; no edits"),
+                    ("admin", "admin123", "All departments; edit job titles; no salaries")]
+        if coldchain:
+            from departments import scope_text
+            accounts += [("sales", "sales123", ""), ("ops", "ops123", ""), ("finance", "finance123", "")]
         st.table([
             {"Username": name, "Password": password,
-             "Permissions": (f"ColdChain {coldchain_role(USERS[name])}; read-only queries; separate execution approval"
-                             if coldchain else permissions)}
-            for name, password, permissions in [
-                ("employee", "employee123", "Engineering department only; no salaries; no edits"),
-                ("hr", "hr123", "All departments and salaries; no edits"),
-                ("admin", "admin123", "All departments; edit job titles; no salaries"),
-            ]
+             "Access": scope_text(coldchain_role(USERS[name])) if coldchain else permissions}
+            for name, password, permissions in accounts
         ])
         with st.form("login"):
             name = st.text_input("Username")
@@ -39,10 +42,12 @@ def require_login(permission="query", *, domain="employee"):
         st.stop()
     with st.sidebar:
         st.subheader(f"Signed in: {user.username}")
-        st.caption(f"Role: {coldchain_role(user) if coldchain else user.role}")
         if coldchain:
-            st.info("ColdChain analytics · read-only. Viewer access excludes employee records, email and salaries. Sensitive access requires an explicit admin allowlist.")
+            from departments import label, scope_text
+            st.caption(f"Department: {label(coldchain_role(user))}")
+            st.info(scope_text(coldchain_role(user)))
         else:
+            st.caption(f"Role: {user.role}")
             st.info(scope_description(user))
         if st.button("Log out / switch account"):
             st.session_state.clear()

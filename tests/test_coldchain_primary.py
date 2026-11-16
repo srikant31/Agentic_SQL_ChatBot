@@ -30,7 +30,10 @@ def test_missing_coldchain_configuration_never_falls_back(monkeypatch):
 
 def test_employee_roles_do_not_grant_coldchain_admin_access(monkeypatch):
     monkeypatch.setenv("COLDCHAIN_ADMIN_USERS", "")
-    assert {coldchain_role(user) for user in USERS.values()} == {"viewer"}
+    roles = {name: coldchain_role(user) for name, user in USERS.items()}
+    assert "admin" not in roles.values()                       # no account is admin without the allowlist
+    assert roles == {"employee": "viewer", "hr": "hr", "admin": "viewer", "sales": "sales",
+                     "ops": "operations", "finance": "finance"}
     monkeypatch.setenv("COLDCHAIN_ADMIN_USERS", " hr ")
     assert coldchain_role(USERS["hr"]) == "admin"
     assert coldchain_role(USERS["admin"]) == "viewer"

@@ -105,3 +105,16 @@ def test_scope_text_is_plain_english():
     assert d.scope_text("operations") == ("Operations: you can ask about regions, warehouses, carriers, products, "
                                           "orders, shipments, temperature readings. Not included: discounts, freight "
                                           "costs, prices. Read-only.")
+
+
+def test_login_lists_department_accounts_and_sidebar_shows_scope(monkeypatch):
+    monkeypatch.setenv("COLDCHAIN_DB_URL", "")
+    app = AppTest.from_file(str(ROOT / "sqlapp.py"), default_timeout=20).run()
+    usernames = list(app.table[0].value["Username"])
+    assert usernames == ["employee", "hr", "admin", "sales", "ops", "finance"]
+    app.text_input[0].set_value("ops")
+    app.text_input[1].set_value("ops123")
+    app.button[0].click().run()
+    assert app.session_state["authenticated_username"] == "ops"
+    assert "Department: Operations" in [c.value for c in app.sidebar.caption]
+    assert any("Operations: you can ask about" in str(i.value) for i in app.sidebar.info)

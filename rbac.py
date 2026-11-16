@@ -17,13 +17,17 @@ USERS = {
     "employee": User("employee", "employee", "Engineering", "Asha Verma"),
     "hr": User("hr", "hr", None, "Rohan Mehta"),
     "admin": User("admin", "it_admin", None, "Neha Iyer"),
+    # ColdChain department accounts (fictional). Their ColdChain access comes from departments.py.
+    "sales": User("sales", "employee", "Sales", "Kabir Rao"),
+    "ops": User("ops", "employee", "Operations", "Meera Nair"),
+    "finance": User("finance", "employee", "Finance", "Arjun Malhotra"),
 }
 PERMISSIONS = {
     "employee": {"query"},
     "hr": {"query", "salary", "explorer"},
     "it_admin": {"query", "explorer", "edit_title", "diagnostics"},
 }
-PASSWORD_HASHES = {'employee': '78e46c21edfe1c22388d785daf07eb0c5e032c4d453fd84ce25d1d7858354c16', 'hr': 'c51f9ec7dee882c2d6f7da122ff37bcd1d5ee983386a28e9df930e10c7974202', 'admin': '901521873fd80a08b5c9556039407cdf3355ca54875bb62bb521b498b31acf09'}  # Populated with PBKDF2 hashes, never real account passwords.
+PASSWORD_HASHES = {'employee': '78e46c21edfe1c22388d785daf07eb0c5e032c4d453fd84ce25d1d7858354c16', 'hr': 'c51f9ec7dee882c2d6f7da122ff37bcd1d5ee983386a28e9df930e10c7974202', 'admin': '901521873fd80a08b5c9556039407cdf3355ca54875bb62bb521b498b31acf09', 'sales': '3aa8fe6b0570aeefc7845955eebf44bf8cabd1151d0c19975ac40c8a7cf356eb', 'ops': 'da7d7167e9269410a1ebcf571715171726e1d0ec6f5c988ee384f756b26bb2b8', 'finance': '48572803cb05ea6592e1250c72c42e32566aa27f13b173088bf699a3fcc30087'}  # Populated with PBKDF2 hashes, never real account passwords.
 
 def authenticate(username, password):
     candidate = hashlib.pbkdf2_hmac("sha256", password.encode(), b"sql-rbac-demo-v1", 120000).hex()
