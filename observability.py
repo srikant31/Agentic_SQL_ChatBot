@@ -101,6 +101,18 @@ def redacted_trace(name):
 
 
 _CLIENT = None
+_PROJECT_ID = None
+
+
+def _project_id():
+    """LangSmith wants feedback linked to its project (session) ID. Looked up once, then reused."""
+    global _PROJECT_ID
+    if _PROJECT_ID is None:
+        try:
+            _PROJECT_ID = str(_CLIENT.read_project(project_name=os.getenv("LANGSMITH_PROJECT", "sql-chatbot")).id)
+        except Exception:
+            _PROJECT_ID = ""   # unknown: feedback still works, LangSmith only warns
+    return _PROJECT_ID or None
 
 
 def send_feedback(run_id, key, score, comment=None):
@@ -112,7 +124,8 @@ def send_feedback(run_id, key, score, comment=None):
         if _CLIENT is None:
             from langsmith import Client
             _CLIENT = Client()
-        _CLIENT.create_feedback(run_id=run_id, key=key, score=score,
+        # Each proposal/run is its own root trace, so the run ID is also the trace ID.
+        _CLIENT.create_feedback(run_id=run_id, trace_id=run_id, session_id=_project_id(), key=key, score=score,
                                 comment=(comment or None) and str(comment)[:200])
         return True
     except Exception as exc:  # network, auth or quota problems only lose the feedback

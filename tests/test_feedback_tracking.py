@@ -134,10 +134,10 @@ def test_coldchain_chat_records_every_step_with_model_calls_and_trace_ids(monkey
         app.session_state["authenticated_username"] = "employee"
         app.run()
         app.chat_input[0].set_value("Count all orders").run()
-        next(b for b in app.button if b.label == "👎 Needs changes").click().run()
+        next(b for b in app.button if b.label == "Negative").click().run()
         next(a for a in app.text_area if a.label == "What should change?").set_value("Only March 2026").run()
         next(b for b in app.button if b.label == "Rewrite query").click().run()
-        next(b for b in app.button if b.label == "👍 Looks good").click().run()
+        next(b for b in app.button if b.label == "Positive").click().run()
         next(b for b in app.button if b.label == "Approve & run").click().run()
         assert not app.exception
 

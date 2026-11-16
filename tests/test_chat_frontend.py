@@ -46,9 +46,9 @@ def test_chat_keeps_question_explanation_and_feedback_separate_from_execution(em
         assert any(item.value == QUESTION for item in app.markdown)
         assert any("Counts the employee" in item.value for item in app.markdown)
         execute.assert_not_called()
-        button(app, "👍 Looks good").click().run()
+        button(app, "Positive").click().run()
         execute.assert_not_called()
-        button(app, "👎 Needs changes").click().run()
+        button(app, "Negative").click().run()
         assert not app.exception
         assert "Please prompt again" in area(app).proto.placeholder
         assert not any(item.label == "Run this query" for item in app.button)
@@ -75,11 +75,11 @@ def test_three_rewrites_then_apology_without_fourth_generation(employee_database
         app.run()
         app.chat_input[0].set_value(QUESTION).run()
         for number in range(3):
-            button(app, "👎 Needs changes").click().run()
+            button(app, "Negative").click().run()
             area(app).set_value(f"Please make the explanation clearer, revision {number + 1}").run()
             button(app, "Rewrite query").click().run()
             assert not app.exception
-        button(app, "👎 Needs changes").click().run()
+        button(app, "Negative").click().run()
         app.run()
         assert any("three rewrites" in item.value for item in app.info)
         assert not any(item.label == "Rewrite query" for item in app.button)
@@ -94,7 +94,7 @@ def test_rewritten_question_is_authorized_again(employee_database):
         app.session_state["authenticated_username"] = "employee"
         app.run()
         app.chat_input[0].set_value(QUESTION).run()
-        button(app, "👎 Needs changes").click().run()
+        button(app, "Negative").click().run()
         area(app).set_value("Include salaries").run()
         button(app, "Rewrite query").click().run()
         assert not app.exception
@@ -131,7 +131,7 @@ def test_coldchain_feedback_restores_rewrite_budget_and_requires_approval(monkey
         app.chat_input[0].set_value("Count all orders").run()
         assert not app.exception
         execute.assert_not_called()
-        button(app, "👎 Needs changes").click().run()
+        button(app, "Negative").click().run()
         area(app).set_value("Only March 2026").run()
         button(app, "Rewrite query").click().run()
         assert not app.exception
@@ -141,7 +141,7 @@ def test_coldchain_feedback_restores_rewrite_budget_and_requires_approval(monkey
         assert not app.exception
         assert app.session_state["coldchain_query_chat"]["requests"][-1]["rewrites"] == 1
         assert llm.invoke.call_count == 4
-        button(app, "👍 Looks good").click().run()
+        button(app, "Positive").click().run()
         execute.assert_not_called()
         button(app, "Approve & run").click().run()
         assert not app.exception

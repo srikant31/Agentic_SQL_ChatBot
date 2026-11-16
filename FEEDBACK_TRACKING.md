@@ -89,3 +89,11 @@ A 52-case golden run with `SQLSemanticEquivalence` needs about 52 judge calls, w
 ## Tests
 
 `tests/test_feedback_tracking.py` and `tests/test_ragas_eval.py`. Ragas scoring tests are skipped automatically when Ragas is not installed.
+
+## Patch 5 additions
+
+- **Ratings:** each proposal asks "How does this query look?" (Positive / Negative; Negative opens the rewrite box). After a run, "How was your result?" (Positive / Negative) is logged as `result_vote` and sent to LangSmith as `result_vote` on the run's trace. A query can look right and still answer wrongly, so the two ratings are kept separate.
+- **Progress:** the graph is streamed and each real step updates a status message (understanding, writing SQL, checking, running, summarising). Nothing is simulated.
+- **One automatic repair:** `max_attempts=2`. If validation or the database rejects the SQL, the model gets one silent retry with the error. It never uses the user's three rewrites. Repaired SQL is shown with a notice and must be approved again.
+- **Prompt caching:** the schema and glossary are sent first, as an identical message for classify and generate. The question, history and instructions come after it. Sample values are sorted so the block never changes. Groq's cached tokens do not count toward rate limits. `llm_calls.cached_tokens` records how many tokens came from cache, and existing databases get the new column automatically.
+- **LangSmith feedback** now includes the trace ID and the project (session) ID, which removes the deprecation warning.

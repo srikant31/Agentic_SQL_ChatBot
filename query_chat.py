@@ -74,6 +74,14 @@ def executable(request):
                 and not request["exhausted"] and entry.get("vote") != "negative")
 
 
+def result_feedback(request, vote, version):
+    """Rate the executed result. Separate from the proposal vote: a query can look right and still answer wrongly."""
+    entry = latest_response(request)
+    if vote not in {"positive", "negative"} or not entry or entry["version"] != version or not entry["execution_attempted"]:
+        raise ValueError("This rating belongs to an older result.")
+    entry["result_vote"] = vote
+
+
 def record_result(request, columns=None, rows=None, error=None):
     entry = latest_response(request)
     entry["execution_attempted"] = True
@@ -98,6 +106,8 @@ def render_conversation(chat, prefix, *, run_label="Run this query", can_generat
                     st.error(entry["text"])
                 else:
                     st.write(entry["text"])
+                if entry.get("notice"):
+                    st.info(entry["notice"])
                 proposal = entry.get("proposal")
                 if proposal:
                     if entry["version"]:
@@ -120,10 +130,23 @@ def render_conversation(chat, prefix, *, run_label="Run this query", can_generat
                 if entry["role"] != "assistant" or request is not active or entry is not latest:
                     continue
                 key = f"{prefix}:{request['id']}:{entry['version']}"
+                if entry["execution_attempted"]:
+                    # After a run, the question is about the answer itself, not the proposed query.
+                    if entry.get("result_vote"):
+                        st.caption(f"Thanks, your result rating ({entry['result_vote']}) was recorded.")
+                    else:
+                        st.caption("How was your result?")
+                        positive, negative = st.columns(2)
+                        if positive.button("Positive", key=key + ":result_positive"):
+                            return {"action": "result_positive", "version": entry["version"]}
+                        if negative.button("Negative", key=key + ":result_negative"):
+                            return {"action": "result_negative", "version": entry["version"]}
+                    continue
+                st.caption("How does this query look?" if entry.get("proposal") else "Was this answer helpful?")
                 positive, negative = st.columns(2)
-                if positive.button("👍 Looks good", key=key + ":positive"):
+                if positive.button("Positive", key=key + ":positive"):
                     return {"action": "positive", "version": entry["version"]}
-                if negative.button("👎 Needs changes", key=key + ":negative"):
+                if negative.button("Negative", key=key + ":negative"):
                     return {"action": "negative", "version": entry["version"]}
                 if entry.get("vote") == "positive":
                     st.caption("Thanks for your feedback. SQL runs only when you click the run button.")

@@ -31,7 +31,7 @@ def test_public_query_runs_without_interrupt_and_uses_history():
     graph = build_graph(InMemorySaver(), llm=llm, context_loader=context, executor=execute)
     out = graph.invoke({"question": "And in April?", "history": [{"role": "user", "content": "Count March orders"}], "role": "viewer"}, cfg())
     assert out["status"] == "complete" and out["rows"] == [[3]]
-    assert "Count March orders" in llm.invoke.call_args_list[1].args[0][1].content
+    assert "Count March orders" in llm.invoke.call_args_list[1].args[0][-1].content
     assert "2026-06-30" in llm.invoke.call_args_list[1].args[0][0].content
     execute.assert_called_once()
 

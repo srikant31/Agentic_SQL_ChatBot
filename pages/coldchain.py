@@ -32,7 +32,9 @@ try:
     if not resource.persistent:
         st.warning("In-memory approvals will not survive a restart or app sleep.")
     engine = get_coldchain_engine()
-    graph = build_graph(resource.saver, engine=engine, review_all=True, max_attempts=1, explain_sql=True)
+    # max_attempts=2: one automatic repair when validation or the database rejects the SQL. It never
+    # counts against the user's three rewrites, and repaired SQL still needs a fresh approval.
+    graph = build_graph(resource.saver, engine=engine, review_all=True, max_attempts=2, explain_sql=True)
     try:
         tid = str(uuid.UUID(st.query_params.get("tid", "")))
     except (ValueError, TypeError):

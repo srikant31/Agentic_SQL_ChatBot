@@ -13,7 +13,15 @@ import sql_generator
 from observability import send_feedback
 from query_errors import error_message
 from query_chat import (new_chat, start_request, add_response, active_request, latest_response,
-                        feedback, begin_rewrite, executable, record_result, render_conversation)
+                        feedback, result_feedback, begin_rewrite, executable, record_result, render_conversation)
+
+# Real graph steps, shown while the user waits. Each label appears only when that step actually starts.
+STAGES = {"classify": "Understanding your question...", "generate": "Writing the SQL query...",
+          "validate": "Checking the query against the schema and your permissions...",
+          "approve": "Getting the query ready for your review...", "execute": "Running the read-only query...",
+          "summarize": "Summarising the result...", "give_up": "Stopping: no safe query could be produced..."}
+REPAIRED_NOTICE = ("The first version of this query failed in the database, so it was corrected automatically. "
+                   "Review the corrected SQL below and approve it to run.")
 
 
 def render_coldchain_chat(graph, cfg, user, role, snapshot):
@@ -42,7 +50,8 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
 
     st.session_state.setdefault("coldchain_questions_asked", 0)
     remaining = MAX_QUESTIONS_PER_SESSION - st.session_state.coldchain_questions_asked
-    st.caption("Review your question, explanation and SQL. Thumbs feedback lets you request up to three rewrites; it never runs SQL.")
+    st.caption("Review your question, explanation and SQL. Rate each proposal Positive or Negative: Negative lets you "
+               "request up to three rewrites. Rating never runs SQL.")
     st.caption(f"Questions remaining: {max(remaining, 0)} / {MAX_QUESTIONS_PER_SESSION}")
 
     model = cfg.get("metadata", {}).get("model")
@@ -67,6 +76,18 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
         return prompt_log.bind(username=user.username, role=role, request_id=request["id"],
                                version=request["rewrites"], model=model, run_id=run_id)
 
+    def run_graph(graph_input, call_cfg, progress):
+        """Stream the graph so each real step can update the progress message, then read the final state."""
+        for chunk in graph.stream(graph_input, call_cfg, stream_mode="updates"):
+            for node in chunk:
+                if node in STAGES:
+                    progress.update(label=STAGES[node])
+        snapshot = graph.get_state(cfg)
+        output = dict(snapshot.values)
+        if any(task.interrupts for task in snapshot.tasks):
+            output["__interrupt__"] = True
+        return output
+
     def discard_pending():
         current = graph.get_state(cfg)
         if any(task.interrupts for task in current.tasks):
@@ -86,18 +107,20 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
         elapsed = lambda: int((time.perf_counter() - started) * 1000)
         call_cfg, run_id = traced("proposal", request)
         try:
-            with st.spinner("Preparing your updated ColdChain proposal..." if rewrite else "Preparing your ColdChain proposal..."), \
-                 prompts_for(request, run_id):
+            with st.status("Preparing your ColdChain proposal...") as progress, prompts_for(request, run_id):
                 if rewrite:
+                    progress.update(label="Applying your changes to the question...")
                     extra_calls = 1  # the question-rewrite request runs outside the graph
                     request["current_question"] = sql_generator.rewrite_question(
                         request["original_question"], request["current_question"], request["modifications"])
                 history = [{"role": message["role"], "content": message["text"][:4000]}
                            for prior in chat["requests"] for message in prior["messages"]][:-1]
-                output = graph.invoke({"question": request["current_question"], "history": history[-20:],
+                output = run_graph({"question": request["current_question"], "history": history[-20:],
                     "role": role, "attempts": 0, "model_calls": 0, "approved": False, "refused": False,
                     "needs_clarification": False, "rows": [], "columns": [], "sql": "", "explanation": "",
-                    "error": "", "answer": "", "review_context": deepcopy(chat)}, call_cfg)
+                    "error": "", "answer": "", "review_context": deepcopy(chat)}, call_cfg, progress)
+                progress.update(label="Proposal ready for your review" if output.get("__interrupt__") else "Finished",
+                              state="complete")
                 calls = output.get("model_calls", 0) + extra_calls
                 if output.get("__interrupt__"):
                     add_response(request, proposal={"sql": output["sql"], "explanation": output["explanation"],
@@ -131,13 +154,29 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
                 raise PermissionError("This proposal is no longer active. Request a fresh proposal.")
             call_cfg, run_id = traced("run", request)
             before = current.values.get("model_calls", 0)
-            with prompts_for(request, run_id):
-                output = graph.invoke(Command(resume={"action": "approve"}), call_cfg)
+            with st.status("Running your approved query...") as progress, prompts_for(request, run_id):
+                output = run_graph(Command(resume={"action": "approve"}), call_cfg, progress)
+                progress.update(label="Done", state="complete")
             answer = output.get("answer")
+            if output.get("__interrupt__"):
+                # The database rejected the SQL and one automatic repair produced new SQL. Changed SQL always
+                # needs a fresh approval, so show it as the same version (not a user rewrite) and stop here.
+                entry = latest_response(request)
+                entry["proposal"] = {**entry["proposal"], "sql": output["sql"], "explanation": output["explanation"],
+                                     "trace_id": run_id, "repaired": True}
+                entry["text"], entry["notice"], entry["vote"] = output["explanation"], REPAIRED_NOTICE, None
+                # No checkpoint write here: updating state while paused would re-queue the approval step and
+                # drop the pending interrupt. After a refresh, the restore path rebuilds this proposal from
+                # the graph's pending SQL.
+                log("proposal", request, status="repaired", model_calls=max(output.get("model_calls", before) - before, 0),
+                    latency_ms=int((time.perf_counter() - started) * 1000), langsmith_run_id=run_id,
+                    question=request["current_question"], sql=output["sql"], explanation=output["explanation"])
+                return
             calls = max(output.get("model_calls", before) - before, 0)
             if output.get("status") != "complete":
                 raise ValueError(output.get("answer", "The query could not be executed."))
             record_result(request, output["columns"], output["rows"])
+            latest_response(request)["run_trace_id"] = run_id
             rows_returned = len(output["rows"])
         except Exception as error:
             status = "chat_error"
@@ -167,6 +206,12 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
             generate(request, rewrite=True)
         elif event["action"] == "run" and executable(request):
             run_proposal(request)
+        elif event["action"] in {"result_positive", "result_negative"}:
+            vote = event["action"].removeprefix("result_")
+            result_feedback(request, vote, event["version"])
+            entry = latest_response(request)
+            log("result_vote", request, version=event["version"], vote=vote, langsmith_run_id=entry.get("run_trace_id"))
+            send_feedback(entry.get("run_trace_id"), "result_vote", 1 if vote == "positive" else 0)
 
     if notice := st.session_state.pop("coldchain_notice", None):
         st.warning(notice)

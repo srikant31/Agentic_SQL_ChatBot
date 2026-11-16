@@ -17,11 +17,11 @@ import os
 from pathlib import Path
 
 from sqlalchemy import (Column, DateTime, Integer, MetaData, String, Table, Text,
-                        create_engine, desc, insert, inspect, select)
+                        create_engine, desc, insert, inspect, select, text)
 
 from diagnostics import log_failure
 
-EVENTS = {"proposal", "vote", "rewrite", "run", "limit_reached"}
+EVENTS = {"proposal", "vote", "rewrite", "run", "limit_reached", "result_vote"}
 DEFAULT_SQLITE = Path(__file__).parent / "data" / "feedback_events.sqlite"
 TEXT_LIMIT = 200_000   # a schema-plus-glossary prompt is tens of KB; this keeps whole prompts
 
@@ -70,6 +70,7 @@ llm_calls = Table(
     Column("latency_ms", Integer),
     Column("input_tokens", Integer),
     Column("output_tokens", Integer),
+    Column("cached_tokens", Integer),                      # input tokens served from Groq's prompt cache
     Column("langsmith_run_id", String(36)),                # the proposal/run trace this call belongs to
 )
 
@@ -108,6 +109,19 @@ class FeedbackStore:
             raise RuntimeError("query_events uses the earlier hashed-session schema. Delete or rename that table "
                                "(local file: data/feedback_events.sqlite) and restart.")
         metadata.create_all(self.engine)
+        self._add_missing_columns()
+
+    def _add_missing_columns(self):
+        """Add columns introduced after a table was created. All later columns are nullable, so
+        existing rows stay valid; nothing is dropped or rewritten."""
+        existing = inspect(self.engine)
+        with self.engine.begin() as connection:
+            for table in (query_events, llm_calls):
+                present = {column["name"] for column in existing.get_columns(table.name)}
+                for column in table.columns:
+                    if column.name not in present:
+                        kind = column.type.compile(dialect=self.engine.dialect)
+                        connection.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {column.name} {kind}'))
 
     def record(self, event, *, username, request_id, version, display_name=None, role=None, hint=None,
                question=None, sql=None, explanation=None, message=None, detail=None, **fields):
@@ -148,7 +162,8 @@ class FeedbackStore:
                    "system_prompt": _text(system), "user_payload": _text(payload_text),
                    "response_text": _text(response), "error": error and str(error)[:200],
                    "latency_ms": _int(latency_ms), "input_tokens": _int(usage.get("input_tokens")),
-                   "output_tokens": _int(usage.get("output_tokens"))}
+                   "output_tokens": _int(usage.get("output_tokens")),
+                   "cached_tokens": _int((usage.get("input_token_details") or {}).get("cache_read"))}
             with self.engine.begin() as connection:
                 connection.execute(insert(llm_calls).values(**row))
             return True

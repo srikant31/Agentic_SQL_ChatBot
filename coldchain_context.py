@@ -49,7 +49,8 @@ def get_schema_context(question="", role="viewer", engine=None):
                     entry["values"] = values
                 elif name in {"status", "segment", "category", "city"} or (table == "regions" and name == "name"):
                     result = connection.execute(text(f"SELECT DISTINCT {quote(name)} FROM {quote(table)} WHERE {quote(name)} IS NOT NULL LIMIT 21"))
-                    values = [row[0] for row in result]
+                    # Sorted so the schema text is byte-identical between calls (prompt caching needs that).
+                    values = sorted((row[0] for row in result), key=str)
                     if len(values) <= 20:
                         entry["values"] = values
                 columns.append(entry)
