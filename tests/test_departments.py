@@ -118,3 +118,20 @@ def test_login_lists_department_accounts_and_sidebar_shows_scope(monkeypatch):
     assert app.session_state["authenticated_username"] == "ops"
     assert "Department: Operations" in [c.value for c in app.sidebar.caption]
     assert any("Operations: you can ask about" in str(i.value) for i in app.sidebar.info)
+
+
+@pytest.mark.parametrize("username, phrase", [("ops", "late shipments"), ("hr", "average salary"),
+                                              ("finance", "freight cost"), ("sales", "customer segment")])
+def test_what_can_i_ask_shows_department_examples(monkeypatch, username, phrase):
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from langgraph.checkpoint.memory import InMemorySaver
+    monkeypatch.setenv("COLDCHAIN_DB_URL", "offline-test-configured")
+    monkeypatch.setenv("COLDCHAIN_ADMIN_USERS", "")
+    with patch("checkpointing.get_checkpointer", return_value=SimpleNamespace(saver=InMemorySaver(), persistent=True)), \
+         patch("coldchain_context.get_coldchain_engine", return_value=None):
+        app = AppTest.from_file(str(ROOT / "sqlapp.py"), default_timeout=20)
+        app.session_state["authenticated_username"] = username
+        app.run()
+        assert not app.exception
+        assert any(phrase in str(m.value) for m in app.markdown)

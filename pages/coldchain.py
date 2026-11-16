@@ -25,8 +25,9 @@ if not (os.getenv("COLDCHAIN_DB_URL") or os.getenv("EVAL_DB_URL")):
 # Existing demo IT-admin does not automatically gain salary/PII permissions in a new domain.
 role = coldchain_role(user)
 with st.expander("What can I ask?"):
-    st.write("Ask about orders, customers, products, warehouses, carriers, shipments and temperature readings.")
-    st.write("For example: How many orders were placed in March 2026? Which carriers have the most delivered shipments?")
+    from departments import EXAMPLES, scope_text
+    st.write(scope_text(role))
+    st.markdown("For example:\n" + "\n".join(f"- {example}" for example in EXAMPLES[role]))
 try:
     resource = get_checkpointer()
     if not resource.persistent:

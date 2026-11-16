@@ -82,3 +82,17 @@ def outside_scope_text(role):
     parts += [f"{PLAIN_COLUMNS[c]} ({COLUMN_OWNERS[c]})" for c in sorted(policy["hidden"])]
     return ("The user's department is " + policy["label"] + ". Not available to this department: " + "; ".join(parts)
             + ". If the question needs any of these, refuse and say which team can answer it.")
+
+
+# Example questions shown under "What can I ask?", written for people who do not know SQL.
+EXAMPLES = {
+    "viewer": ["How many orders were placed in March 2026?", "Which carriers delivered the most shipments?"],
+    "sales": ["What was the total revenue by customer segment in May 2026?",
+              "Which 5 products sold the most units in 2026?"],
+    "operations": ["Which carrier had the most late shipments in June 2026?",
+                   "How many shipments had a temperature excursion?"],
+    "finance": ["What was the total freight cost by carrier in 2026?",
+                "What was the revenue after discounts by region in Q2 2026?"],
+    "hr": ["What is the average salary for each role?", "How many employees work at each warehouse?"],
+    "admin": ["How many orders were placed in March 2026?", "What is the average salary for each role?"],
+}
