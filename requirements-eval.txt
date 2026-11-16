@@ -1,0 +1,5 @@
+# Optional evaluation extras. Not needed to run the app or the offline test suite.
+# datacompy is pinned below 1.0: version 1.x removed the Compare class that Ragas imports.
+-r requirements.txt
+ragas==0.4.4
+datacompy==0.19.5

@@ -26,3 +26,14 @@ def demo_engine(tmp_path):
 @pytest.fixture
 def hr_catalog(demo_engine):
     return get_catalog(USERS["hr"], demo_engine)
+
+
+@pytest.fixture(autouse=True)
+def isolated_feedback_store(tmp_path, monkeypatch):
+    """Every test writes feedback events to its own throwaway SQLite file, never to data/."""
+    import feedback_store
+    monkeypatch.setenv("FEEDBACK_DB_URL", f"sqlite:///{tmp_path}/feedback.sqlite")
+    monkeypatch.delenv("FEEDBACK_STORE_HINTS", raising=False)
+    feedback_store.reset_store()
+    yield
+    feedback_store.reset_store()

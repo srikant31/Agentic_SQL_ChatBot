@@ -37,3 +37,6 @@ ca.pem
 /eval_results.csv
 
 session-checklist.md
+
+# Local feedback event store (fictional usage data)
+/data/

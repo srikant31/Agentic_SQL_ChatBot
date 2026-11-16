@@ -401,3 +401,7 @@ larger commits rather than a granular step-by-step history.*
   credentials handled through the platform's secrets manager rather than a
   local file.
 git add pages/roadmap.py README.md .gitignore
+
+## Feedback tracking and evaluation
+
+Every proposal, vote, rewrite and run is logged to an append-only event table, linked to its LangSmith trace. Saved golden-set results can be re-scored with Ragas for partial credit. See [FEEDBACK_TRACKING.md](FEEDBACK_TRACKING.md).

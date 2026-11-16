@@ -47,4 +47,19 @@ except Exception as exc:
 
 from coldchain_chat_ui import render_coldchain_chat
 
+if role == "admin":
+    import feedback_store
+    with st.expander("System performance (admins only)"):
+        store = feedback_store.get_store()
+        if store is None:
+            st.info("Feedback storage is unavailable. Check FEEDBACK_DB_URL or PG_URL.")
+        else:
+            try:
+                st.json(store.summary())
+                st.caption("Acceptance shows what users clicked, not whether answers were correct. "
+                           "Correctness comes from the golden-set evaluation.")
+            except Exception as exc:
+                log_failure("feedback_summary_failed", exc)
+                st.info("Feedback summary could not be loaded.")
+
 render_coldchain_chat(graph, cfg, user, role, snapshot)
