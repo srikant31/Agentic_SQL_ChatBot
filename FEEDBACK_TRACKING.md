@@ -109,3 +109,12 @@ Every ColdChain proposal now shows these sections, written by code from the pars
 
 The rules shown are stored in `query_events.detail` and listed in the admin conversation log.
 Limit: keyword ranking can miss a rule phrased very differently from the question, or show a loosely related one.
+
+## What changed between versions (item 8)
+
+Every rewritten or automatically repaired proposal starts with a plain-English change list, computed by
+`query_insight.compare()` from the two SQL versions with no model calls. For example: "Added filter: order
+status is delivered", "Now also reads: regions", "Output renamed: 'a' → 'b'", "Row limit changed: 100 → 10".
+Unchanged parts are summarised underneath, and "Show SQL changes" holds a line-by-line diff of the formatted
+SQL. A repaired proposal is compared with the SQL that failed. The change list is also stored in the
+proposal's `detail` in the log. Approval still resets whenever the SQL changes.
