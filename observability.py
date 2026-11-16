@@ -1,5 +1,6 @@
 """Opt-in LangSmith settings, loaded before LangChain/graph imports."""
 import os
+from pathlib import Path
 
 SETTINGS = ("LANGSMITH_API_KEY", "LANGSMITH_TRACING", "LANGSMITH_PROJECT",
             "LANGSMITH_ENDPOINT", "LANGSMITH_HIDE_INPUTS", "LANGSMITH_HIDE_OUTPUTS",
@@ -31,8 +32,19 @@ def configure_observability(secrets=None):
     os.environ.setdefault("LANGSMITH_HIDE_OUTPUTS", "true")
 
 
+ENV_FILE = Path(__file__).with_name(".env")
+
+
+def load_env_file(path=None):
+    """Read .env BEFORE defaults are applied. Defaults use setdefault, and load_dotenv never
+    overrides, so loading .env later (as config.py does) silently lost its LangSmith settings."""
+    from dotenv import load_dotenv
+    load_dotenv(path or ENV_FILE, override=False)
+
+
 def load_streamlit_settings():
     import streamlit as st
+    load_env_file()
     try:
         # Only copy an explicit allowlist; never print the secrets mapping.
         configure_observability(st.secrets)

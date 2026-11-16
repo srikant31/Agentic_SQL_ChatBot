@@ -43,3 +43,27 @@ def test_trace_summaries_preserve_shape_without_payloads():
         "keys": ["rows", "sql", "status"], "status": "complete"}
     assert _safe_out({"status": "secret free text"})["status"] is None
     assert _safe_out("secret answer") == {"type": "str"}
+
+
+def test_env_file_is_read_before_defaults_so_its_settings_win(tmp_path, monkeypatch):
+    """Regression: sqlapp.py applied defaults before config.py loaded .env, so tracing stayed off."""
+    import observability
+    env = tmp_path / ".env"
+    env.write_text("LANGSMITH_TRACING=true\nLANGSMITH_HIDE_INPUTS=false\n", encoding="utf-8")
+    for key in ("LANGSMITH_TRACING", "LANGSMITH_HIDE_INPUTS"):
+        monkeypatch.delenv(key, raising=False)
+    observability.load_env_file(env)
+    observability.configure_observability()
+    assert os.environ["LANGSMITH_TRACING"] == "true"
+    assert os.environ["LANGSMITH_HIDE_INPUTS"] == "false"
+
+
+def test_streamlit_settings_load_the_env_file_first(monkeypatch):
+    import importlib
+    import observability
+    real = importlib.reload(observability)          # the conftest replaces this function with a no-op
+    order = []
+    monkeypatch.setattr(real, "load_env_file", lambda path=None: order.append("env"))
+    monkeypatch.setattr(real, "configure_observability", lambda secrets=None: order.append("defaults"))
+    real.load_streamlit_settings()
+    assert order == ["env", "defaults"]
