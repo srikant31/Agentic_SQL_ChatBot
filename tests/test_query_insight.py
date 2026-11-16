@@ -20,42 +20,42 @@ SALES_NO_STATUS = ("SELECT SUM(oi.quantity * oi.unit_price * (1 - COALESCE(o.dis
 SALES_OK = SALES_NO_STATUS.replace("WHERE ", "WHERE o.status IN ('shipped', 'delivered') AND ")
 
 
-def rule(result, term):
-    return next(r for r in result["rules"] if r["term"] == term)
+def terms(question, sql):
+    return [r["term"] for r in qi.rules_for(question, sql)]
 
 
-def test_counting_cancelled_sales_is_flagged():
+@pytest.mark.parametrize("question, sql, expected", [
+    ("What were total sales in Bangalore across May and June?", SALES_NO_STATUS, {"Revenue", "Bangalore / Bombay"}),
+    ("Which carrier had the most late shipments last month?",
+     "SELECT c.name FROM shipments s JOIN carriers c ON c.carrier_id = s.carrier_id WHERE DATE(s.delivered_at) > s.promised_date",
+     {"Late shipment", "Today's date"}),
+    ("How many shipments are still in transit?", "SELECT COUNT(*) FROM shipments WHERE delivered_at IS NULL", {"In transit"}),
+    ("Which products had temperature excursions?", "SELECT p.name FROM products p", {"Temperature excursion"}),
+    ("List hospital customers in the North region",
+     "SELECT c.name FROM customers c JOIN regions r ON r.region_id = c.region_id WHERE r.name = 'North'", {"Northern region"}),
+])
+def test_relevant_business_rules_are_listed(question, sql, expected):
+    assert expected <= set(terms(question, sql))
+
+
+def test_rules_carry_glossary_definitions_and_no_verdicts():
+    rules = qi.rules_for("total sales in Bengaluru", SALES_NO_STATUS)
+    revenue = next(r for r in rules if r["term"] == "Revenue")
+    assert "shipped" in revenue["definition"] and "Cancelled and returned orders are excluded" in revenue["definition"]
+    assert set(revenue) == {"term", "definition", "score"}          # what the rule says, not whether it was followed
+
+
+def test_questions_without_a_special_rule_show_none():
+    assert terms("How many delivered orders in March 2026?", "SELECT COUNT(*) FROM orders WHERE status = 'delivered'") == []
+
+
+def test_assumptions_still_explain_what_is_included():
     result = qi.analyze("Total sales in Bangalore across May and June", SALES_NO_STATUS)
-    revenue = rule(result, "Revenue")
-    assert revenue["status"] == "warn" and "cancelled" in revenue["detail"]
-    assert "shipped" in revenue["definition"]                      # definition comes from the glossary file
     assert "All order statuses are included: placed, shipped, delivered, cancelled and returned." in result["assumptions"]
-
-
-def test_correct_revenue_query_passes_and_reads_naturally():
-    result = qi.analyze("Total sales in Bengaluru across May and June", SALES_OK)
-    assert rule(result, "Revenue")["status"] == "ok" and rule(result, "Discount")["status"] == "ok"
-    text = " ".join(result["summary"])
+    ok = qi.analyze("Total sales in Bengaluru across May and June", SALES_OK)
+    text = " ".join(ok["summary"])
     assert "order date from 2026-05-01 up to (not including) 2026-07-01" in text
     assert "order status is one of: shipped, delivered" in text and "Links order items by order id" in text
-    assert "Prices are the prices charged at the time of sale, not today's list prices." in result["assumptions"]
-
-
-@pytest.mark.parametrize("sql, term, phrase", [
-    ("SELECT COUNT(*) FROM customers WHERE city = 'Bangalore'", "Bangalore / Bombay", "Bengaluru"),
-    ("SELECT COUNT(*) FROM orders WHERE status = 'canceled'", "Cancelled", "cancelled"),
-    ("SELECT COUNT(*) FROM orders WHERE order_date BETWEEN '2026-05-01' AND '2026-05-31'", "Date ranges", "after midnight"),
-    ("SELECT COUNT(*) FROM orders WHERE order_date >= CURDATE() - INTERVAL 30 DAY", "Today's date", "2026-06-30"),
-    ("SELECT SUM(oi.quantity * p.unit_price) FROM order_items oi JOIN products p ON p.product_id = oi.product_id "
-     "JOIN orders o ON o.order_id = oi.order_id WHERE o.status IN ('shipped','delivered')", "Revenue", "list price"),
-    ("SELECT SUM(oi.quantity) FROM order_items oi JOIN orders o ON o.order_id = oi.order_id", "Units sold", "cancelled"),
-    ("SELECT SUM(oi.quantity * oi.unit_price * (1 - o.discount_pct / 100)) FROM orders o JOIN order_items oi "
-     "ON oi.order_id = o.order_id WHERE o.status IN ('shipped','delivered')", "Discount", "missing discount"),
-])
-def test_rule_breaks_are_flagged(sql, term, phrase):
-    question = "units sold" if term == "Units sold" else "revenue for orders"
-    found = rule(qi.analyze(question, sql), term)
-    assert found["status"] == "warn" and phrase in found["detail"]
 
 
 def test_single_table_columns_and_multi_step_queries_are_described():
@@ -105,13 +105,13 @@ def test_proposal_screen_shows_description_rules_and_logs_the_checks(monkeypatch
         app.chat_input[0].set_value("Total sales in Bangalore across May and June").run()
         assert not app.exception
         text = " ".join(str(m.value) for m in app.markdown)
-        assert "What this query will fetch" in text and "Rules applied" in text and "Assumptions" in text
-        assert "cancelled and returned orders are counted too" in text
-        assert any("may not be followed" in str(w.value) for w in app.warning)
+        assert "What this query will fetch" in text and "Business rules for this query" in text and "Assumptions" in text
+        assert "**Revenue**:" in text and "**Bangalore / Bombay**:" in text
+        assert not app.warning                                         # rules are shown, not judged
         assert [e.label for e in app.expander if e.label in ("How the AI described it", "Show SQL")] == \
                ["How the AI described it", "Show SQL"]
         assert any("SUM(oi.quantity" in str(c.value) for c in app.code)
 
     (proposal,) = [e for e in feedback_store.get_store().events() if e["event"] == "proposal"]
     detail = json.loads(proposal["detail"])
-    assert {"term": "Revenue", "status": "warn"} in detail["rules"]
+    assert "Revenue" in [r["term"] for r in detail["rules"]]

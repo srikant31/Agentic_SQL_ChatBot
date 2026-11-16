@@ -100,12 +100,12 @@ A 52-case golden run with `SQLSemanticEquivalence` needs about 52 judge calls, w
 
 ## Step 2: what the query will really do (`query_insight.py`)
 
-Every ColdChain proposal now shows four sections, written by code from the parsed SQL. They cost no model calls.
+Every ColdChain proposal now shows these sections, written by code from the parsed SQL. They cost no model calls.
 
 - **What this query will fetch:** tables read, how they are linked, filters (date ranges merged into "from ... up to (not including) ..."), grouping, outputs, sorting and the row limit. Multi-step queries (CTEs) are described step by step.
-- **Rules applied:** glossary terms relevant to the question or the SQL, each marked ✅ followed, ⚠️ may be broken (with the reason) or ℹ️ applies but is not checked automatically. The definition shown comes from `golden_eval/business_glossary.md`, the same file the model receives, so a wrong definition is visible to the user. Automatic checks cover revenue status filter and sale price, units sold excluding cancelled orders, missing discounts treated as 0, the 'cancelled' spelling, Bengaluru/Mumbai names, in-transit and late-shipment definitions, real current-date functions, and BETWEEN on datetime columns. Any warning puts a banner above the proposal.
+- **Business rules for this query:** the glossary rules most relevant to the question and its SQL, with their definitions from `golden_eval/business_glossary.md` (the same text the model receives). They are ranked by plain BM25 (`BM25Okapi`) over each rule's term, definition and a few synonyms (for example 'sales' for Revenue). Question words count fully and SQL table/column names count 0.3, plurals are folded, and a rule is shown only if it scores at least 2.5 and at least 60% of the best match (up to 5). The model still receives the whole glossary; this shows which parts matter for this query. No verdicts.
 - **Assumptions:** statuses included when there is no status filter, which date column defines a period, customer vs warehouse region, 'today' = 2026-06-30 for relative dates, sale price vs list price, row limit.
 - The model's own explanation and the SQL are kept in expanders ("How the AI described it", "Show SQL").
 
-The rule results are stored in `query_events.detail` and shown in the admin conversation log.
-Limits: the checks are pattern-based. They catch common mistakes, but a ✅ is not proof the answer is correct.
+The rules shown are stored in `query_events.detail` and listed in the admin conversation log.
+Limit: keyword ranking can miss a rule phrased very differently from the question, or show a loosely related one.

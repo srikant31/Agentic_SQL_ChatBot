@@ -34,8 +34,7 @@ def _step(item):
     except ValueError:
         detail = {}
     if detail.get("rules"):
-        marks = {"ok": "✅", "warn": "⚠️", "info": "ℹ️"}
-        st.caption("Rules: " + ", ".join(f"{marks.get(r['status'], '')} {r['term']}" for r in detail["rules"]))
+        st.caption("Business rules shown: " + ", ".join(r["term"] for r in detail["rules"]))
     facts = {key: item.get(key) for key in ("model_calls", "latency_ms", "rows_returned", "langsmith_run_id")
              if item.get(key) is not None}
     if facts:

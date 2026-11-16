@@ -72,7 +72,7 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
         """Compact record of the rule checks for the log (the full text is recomputable from the SQL)."""
         if not insight:
             return None
-        return {"rules": [{"term": r["term"], "status": r["status"]} for r in insight["rules"]],
+        return {"rules": [{"term": r["term"], "score": r["score"]} for r in insight["rules"]],
                 "assumptions": insight["assumptions"]}
 
     def log(event, request, version=None, **fields):

@@ -2,16 +2,15 @@
 
 analyze(question, sql) returns:
   summary      plain-English sentences describing sources, links, filters, grouping, outputs, order, limit
-  rules        business rules relevant to this question or SQL, each with a status:
-                 "ok"    the SQL satisfies the rule
-                 "warn"  the SQL appears to break the rule (with the reason)
-                 "info"  the rule applies but cannot be checked automatically (definition shown)
+  rules        the business rules most relevant to this question and its SQL, ranked by BM25
+               keyword match over the business glossary (term and definition, no verdicts)
   assumptions  things the SQL takes for granted that a non-SQL user should know
 
 The model's own explanation describes what it MEANT to do; this describes what the SQL DOES.
 Rule definitions come from golden_eval/business_glossary.md, the same file the model receives,
-so a wrong definition there is visible to the user here.
+so the user sees exactly the definitions the model was given.
 """
+from functools import lru_cache
 from pathlib import Path
 import re
 
@@ -287,7 +286,7 @@ def _describe_select(select, aliases, ctes):
     return lines
 
 
-# ----------------------------------------------------------------------------- rule checks
+# ----------------------------------------------------------------------------- business rules
 def _status_filters(tree):
     """(operator, values) for every filter on a column named status."""
     found = []
@@ -311,87 +310,67 @@ def _counted_statuses(tree):
     return allowed
 
 
-def _check(term, tree, sql_lower, aliases):
-    if term == "Revenue":
-        statuses = _counted_statuses(tree)
-        uses_list_price = any(col.name == "unit_price" and aliases.get(col.table, col.table) == "products"
-                              for col in tree.find_all(exp.Column))
-        if uses_list_price:
-            return "warn", "Uses the products' current list price. Revenue should use the price at the time of sale (order items)."
-        if statuses is None:
-            return "warn", "No order-status filter, so cancelled and returned orders are counted too. Revenue should count only shipped or delivered orders."
-        if statuses != {"shipped", "delivered"}:
-            return "warn", "Counts orders with status " + ", ".join(sorted(statuses)) + ". Revenue should count only shipped or delivered orders."
-        return "ok", "Counts only shipped and delivered orders."
-    if term == "Units sold":
-        statuses = _counted_statuses(tree)
-        if statuses is None:
-            return "warn", "No order-status filter, so cancelled orders are counted. Units sold should exclude cancelled orders."
-        if "cancelled" in statuses:
-            return "warn", "Cancelled orders are still counted. Units sold should exclude them."
-        return "ok", "Cancelled orders are excluded."
-    if term == "Discount":
-        uses = [col for col in tree.find_all(exp.Column) if col.name == "discount_pct"]
-        if not uses:
-            return "info", None
-        if all(col.find_ancestor(exp.Coalesce) for col in uses):
-            return "ok", "A missing discount is treated as 0."
-        return "warn", "A missing discount is not treated as 0, so those rows may drop out of the calculation."
-    if term == "Cancelled":
-        if "'canceled'" in sql_lower:
-            return "warn", "Uses the spelling 'canceled'. The database stores 'cancelled', so this matches nothing."
-        return ("ok", "Uses the stored spelling 'cancelled'.") if "'cancelled'" in sql_lower else ("info", None)
-    if term == "Bangalore / Bombay":
-        if "'bangalore'" in sql_lower or "'bombay'" in sql_lower:
-            return "warn", "Uses 'Bangalore' or 'Bombay'. The database stores 'Bengaluru' and 'Mumbai', so this matches nothing."
-        return ("ok", "Uses the stored city names.") if ("'bengaluru'" in sql_lower or "'mumbai'" in sql_lower) else ("info", None)
-    if term == "In transit":
-        return ("ok", "Treats shipments with no delivery time as in transit.") if "delivered_at is null" in sql_lower else ("info", None)
-    if term == "Late shipment":
-        return ("ok", "Compares the delivery date with the promised date.") if "promised_date" in sql_lower else ("info", None)
-    return "info", None
+STOPWORDS = {"the", "a", "an", "of", "in", "on", "for", "to", "and", "or", "is", "are", "was", "were", "by", "with",
+             "what", "which", "how", "many", "much", "show", "me", "list", "give", "all", "each", "per", "from",
+             "across", "between", "did", "do", "does", "we", "our", "my", "i", "it", "that", "this", "as", "at", "be"}
+TODAY_RULE = ("Today's date", f"Today's date for all relative questions is {TODAY} (the data covers 2025-07-01 "
+              f"to {TODAY}). Relative periods such as 'last month' are counted back from this date.")
+TODAY_WORDS = "today yesterday last this previous past current recent latest week month quarter year ytd"
 
 
-def _general_checks(tree, sql_lower):
-    out = []
-    if re.search(r"\b(now|curdate|current_date|current_timestamp|sysdate)\s*\(", sql_lower) or "current_date" in sql_lower:
-        out.append({"term": "Today's date", "status": "warn",
-                    "detail": f"Uses the real current date. In this data, 'today' is {TODAY}, so the results will be wrong or empty.",
-                    "definition": f"Today's date for all relative questions is {TODAY}."})
-    for between in tree.find_all(exp.Between):
-        column = between.this
-        high = _value(between.args["high"])
-        if isinstance(column, exp.Column) and column.name in {"order_date", "shipped_at", "delivered_at", "recorded_at"} \
-                and re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(high)):
-            out.append({"term": "Date ranges", "status": "warn",
-                        "detail": f"{column.name} includes a time of day, so 'between ... and {high}' misses everything after midnight on {high}.",
-                        "definition": "Filter periods with >= first day AND < the day after the last day."})
-    return out
+def _documents(glossary):
+    """One searchable document per rule: term, definition and the question words that point to it."""
+    docs = [(term, " ".join([term, definition, " ".join(TERM_ALIASES.get(term, ()))]))
+            for term, definition in glossary.items()]
+    docs.append((TODAY_RULE[0], " ".join([TODAY_RULE[0], TODAY_RULE[1], TODAY_WORDS])))
+    return tuple(docs)
 
 
-def rules_for(question, sql, glossary=None):
+def _words(text):
+    """Tokens with a light plural fold, so 'excursions' matches 'excursion' and 'shipments' matches 'shipment'."""
+    from retrieval import tokenize
+    return [w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w for w in tokenize(text)]
+
+
+@lru_cache(maxsize=8)
+def _index(docs):
+    from rank_bm25 import BM25Okapi
+    return BM25Okapi([_words(text) for _, text in docs])
+
+
+QUESTION_WEIGHT, SQL_WEIGHT = 1.0, 0.3   # table/column names appear in many rules, so they count less
+MIN_SCORE, RELATIVE_CUTOFF = 2.5, 0.6     # a rule must clearly match, and be close to the best match
+
+
+def rules_for(question, sql, glossary=None, k=5):
+    """The business rules most relevant to this question and its SQL, ranked by BM25 keyword match
+    (plain BM25Okapi: unlike BM25Plus it gives no baseline score, so a cut-off is meaningful).
+    The model receives the whole glossary; this shows which parts matter for this query. No verdicts."""
     glossary = load_glossary() if glossary is None else glossary
-    tree = sqlglot.parse_one(sql, read="mysql")
-    aliases = _aliases(tree)
-    sql_lower = sql.lower()
-    text = (question or "").lower()
-    relevant = []
-    for term, words in TERM_ALIASES.items():
-        if term not in glossary:
-            continue
-        mentioned = any(re.search(r"\b" + re.escape(word), text) for word in words)
-        in_sql = ((term == "Revenue" and "unit_price" in sql_lower and "quantity" in sql_lower)
-                  or (term == "Discount" and "discount_pct" in sql_lower)
-                  or (term == "Cancelled" and "cancel" in sql_lower)
-                  or (term == "Bangalore / Bombay" and any(c in sql_lower for c in ("bangalore", "bombay", "bengaluru", "mumbai")))
-                  or (term == "In transit" and "delivered_at is null" in sql_lower))
-        if mentioned or in_sql:
-            relevant.append(term)
-    results = []
-    for term in relevant:
-        status, detail = _check(term, tree, sql_lower, aliases)
-        results.append({"term": term, "status": status, "detail": detail, "definition": glossary[term]})
-    return _general_checks(tree, sql_lower) + results
+    if not glossary:
+        return []
+    question_words = [w for w in _words(question or "") if w not in STOPWORDS and not w.isdigit()]
+    sql_words = []
+    try:
+        tree = sqlglot.parse_one(sql, read="mysql") if sql else None
+    except Exception:
+        tree = None
+    if tree is not None:
+        identifiers = {t.name for t in tree.find_all(exp.Table)} | {c.name for c in tree.find_all(exp.Column)}
+        literals = {str(l.this) for l in tree.find_all(exp.Literal) if l.is_string and not re.match(r"\d{4}-", str(l.this))}
+        sql_words = [w for w in _words(" ".join(sorted(identifiers | literals))) if not w.isdigit()]
+    if not question_words and not sql_words:
+        return []
+    docs = _documents(glossary)
+    model = _index(docs)
+    scores = [QUESTION_WEIGHT * a + SQL_WEIGHT * b for a, b in
+              zip(model.get_scores(question_words) if question_words else [0.0] * len(docs),
+                  model.get_scores(sql_words) if sql_words else [0.0] * len(docs))]
+    ranked = sorted(zip((term for term, _ in docs), scores), key=lambda item: -item[1])
+    best = ranked[0][1] if ranked else 0.0
+    definitions = {**glossary, TODAY_RULE[0]: TODAY_RULE[1]}
+    return [{"term": term, "definition": definitions[term], "score": round(float(score), 2)}
+            for term, score in ranked[:k] if score >= max(MIN_SCORE, RELATIVE_CUTOFF * best)]
 
 
 # ----------------------------------------------------------------------------- assumptions

@@ -91,24 +91,20 @@ def record_result(request, columns=None, rows=None, error=None):
         entry["columns"], entry["rows"] = list(columns), list(rows)
 
 
-ICONS = {"ok": "✅", "warn": "⚠️", "info": "ℹ️"}
-
-
 def render_insight(st, insight, ai_explanation, sql):
     """Plain-English description written by code from the SQL, then rules, assumptions, AI text and SQL."""
     st.markdown("**What this query will fetch**")
     st.markdown("\n".join(("    - " + line.strip()) if line.startswith("    ") else ("- " + line)
                            for line in insight["summary"]))
+    st.markdown("**Business rules for this query**")
     rules = insight.get("rules") or []
     if rules:
-        broken = [rule for rule in rules if rule["status"] == "warn"]
-        if broken:
-            st.warning(f"{len(broken)} business rule{'s' if len(broken) > 1 else ''} may not be followed. "
-                       "Check below before approving, or ask for changes.")
-        st.markdown("**Rules applied**")
         for rule in rules:
-            st.markdown(f"{ICONS[rule['status']]} **{rule['term']}**" + (f": {rule['detail']}" if rule.get("detail") else ""))
-            st.caption("Rule: " + rule["definition"])
+            st.markdown(f"**{rule['term']}**: {rule['definition']}")
+        st.caption("The AI is given the whole business glossary; these are the rules most relevant to this "
+                   "question, ranked by keyword match (BM25).")
+    else:
+        st.caption("No specific business rule applies to this question.")
     if insight.get("assumptions"):
         st.markdown("**Assumptions**")
         st.markdown("\n".join("- " + item for item in insight["assumptions"]))
