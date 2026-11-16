@@ -407,6 +407,89 @@ def assumptions_for(question, sql):
     return out
 
 
+# ----------------------------------------------------------------------------- version comparison
+def facts(sql):
+    """The comparable parts of a query, in the same plain-English wording as describe()."""
+    tree = sqlglot.parse_one(sql, read="mysql")
+    aliases = _aliases(tree)
+    ctes = {cte.alias for cte in tree.find_all(exp.CTE)}
+    selects = list(tree.find_all(exp.Select))
+    main = _main_select(tree)   # the outer SELECT; CTE bodies are compared through filters and grouping
+    filters, groups = [], []
+    for select in selects:
+        filters.extend(_merge_ranges(_predicates(select.args.get("where")), aliases))
+        group = select.args.get("group")
+        if group is not None:
+            groups.extend(_expr(e, aliases) for e in group.expressions)
+    outputs = {}
+    for projection in (main.expressions if main is not None else []):
+        inner = projection.this if isinstance(projection, exp.Alias) else projection
+        label = "every column" if isinstance(inner, exp.Star) else _expr(inner, aliases)
+        outputs[label] = projection.alias if isinstance(projection, exp.Alias) else ""
+    order = main.args.get("order") if main is not None else None
+    limit = main.args.get("limit") if main is not None else None
+    return {
+        "tables": sorted({t.name.replace("_", " ") for t in tree.find_all(exp.Table) if t.name not in ctes}),
+        "filters": filters,
+        "grouping": groups,
+        "outputs": outputs,
+        "sorting": [f"{_expr(o.this, aliases)} ({'highest' if o.args.get('desc') else 'lowest'} first)"
+                    for o in order.expressions] if order is not None else [],
+        "limit": _value(limit.expression) if limit is not None else None,
+        "steps": len(ctes) + 1,
+    }
+
+
+def _difference(old, new):
+    return [x for x in new if x not in old], [x for x in old if x not in new], [x for x in new if x in old]
+
+
+def compare(old_sql, new_sql):
+    """Plain-English list of what changed between two versions of a query. None if either cannot be read."""
+    try:
+        old, new = facts(old_sql), facts(new_sql)
+    except Exception:
+        return None
+    changes, kept = [], []
+    added, removed, same = _difference(old["tables"], new["tables"])
+    changes += [f"Now also reads: {t}" for t in added] + [f"No longer reads: {t}" for t in removed]
+    if same and not added and not removed:
+        kept.append("tables read (" + ", ".join(same) + ")")
+    added, removed, same = _difference(old["filters"], new["filters"])
+    changes += [f"Added filter: {f}" for f in added] + [f"Removed filter: {f}" for f in removed]
+    if same:
+        kept.append("filters: " + "; ".join(same))
+    added, removed, same = _difference(old["grouping"], new["grouping"])
+    changes += [f"Now grouped by: {g}" for g in added] + [f"No longer grouped by: {g}" for g in removed]
+    if same:
+        kept.append("grouping by " + ", ".join(same))
+    for label, alias in new["outputs"].items():
+        if label not in old["outputs"]:
+            changes.append(f"New output: {label}" + (f" (shown as '{alias}')" if alias else ""))
+        elif old["outputs"][label] != alias and (old["outputs"][label] or alias):
+            changes.append(f"Output renamed: '{old['outputs'][label] or label}' → '{alias or label}'")
+    changes += [f"Removed output: {label}" for label in old["outputs"] if label not in new["outputs"]]
+    if old["sorting"] != new["sorting"]:
+        changes.append("Sorting changed: " + (", ".join(new["sorting"]) or "no sorting")
+                       + " (was " + (", ".join(old["sorting"]) or "no sorting") + ")")
+    if old["limit"] != new["limit"]:
+        changes.append(f"Row limit changed: {old['limit'] or 'none'} → {new['limit'] or 'none'}")
+    if old["steps"] != new["steps"]:
+        changes.append(f"Number of steps changed: {old['steps']} → {new['steps']}")
+    return {"changes": changes, "unchanged": kept}
+
+
+def sql_diff(old_sql, new_sql):
+    """Line-by-line SQL difference on formatted SQL, for readers who want it."""
+    import difflib
+    def pretty(sql):
+        try:
+            return sqlglot.transpile(sql, read="mysql", write="mysql", pretty=True)[0].splitlines()
+        except Exception:
+            return sql.splitlines()
+    return "\n".join(difflib.unified_diff(pretty(old_sql), pretty(new_sql), "previous", "updated", lineterm=""))
+
+
 def analyze(question, sql, glossary=None):
     """Never raises: a description failure must not block the user from reviewing SQL."""
     try:
