@@ -96,7 +96,8 @@ def build_graph(checkpointer, *, engine=None, llm=None, context_loader=None, exe
         made = [0]
         calls = lambda: {"model_calls": state.get("model_calls", 0) + made[0]}
         try:
-            if state.get("role", "viewer") not in {"viewer", "admin"}:
+            from departments import ROLES
+            if state.get("role", "viewer") not in ROLES:
                 raise ValueError("Invalid role.")
             if not isinstance(state.get("question"), str) or not 1 <= len(state["question"]) <= 4000:
                 raise ValueError("Invalid question.")

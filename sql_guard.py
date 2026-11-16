@@ -33,8 +33,8 @@ def connected_catalog(schema, database="coldchain"):
 
 
 def inspect_query(sql, role="viewer"):
-    if role not in {"viewer", "admin"}:
-        raise ValueError("Unknown analytics role.")
+    from departments import allowed_tables, hidden_columns, label
+    allowed, hidden = allowed_tables(role), hidden_columns(role)   # raises ValueError for unknown roles
     if not isinstance(sql, str) or not sql.strip() or len(sql) > 20000:
         raise ValueError("Enter a single query of at most 20000 characters.")
     try:
@@ -63,23 +63,24 @@ def inspect_query(sql, role="viewer"):
                     raise ValueError("Other database schemas are unavailable.")
                 if not isinstance(source.this, exp.Identifier) or name not in _SCHEMA or name not in schema:
                     raise ValueError("Table outside the approved connected catalog.")
-                if role == "viewer" and name == "employees":
-                    raise ValueError("Viewer may not read employees.")
+                if name not in allowed:
+                    raise ValueError(f"The {label(role)} department may not read {name}.")
                 tables.add(name)
                 # Normalize an approved explicit database prefix for schema qualification.
                 source.set("db", None)
             elif not isinstance(source, Scope):
                 raise ValueError("Unsupported query source.")
-    if role == "viewer":
-        if any(column.name.lower() in {"email", "salary_inr"} for column in stmt.find_all(exp.Column)):
-            raise ValueError("Viewer may not read sensitive columns.")
-        if "customers" in tables:
+    if hidden:
+        if any(column.name.lower() in hidden for column in stmt.find_all(exp.Column)):
+            raise ValueError(f"The {label(role)} department may not read: " + ", ".join(sorted(hidden)) + ".")
+        # SELECT * would return hidden columns, so it is refused on any table that has one (COUNT(*) is fine).
+        if any(set(_SCHEMA.get(table, {})) & hidden for table in tables):
             for select in stmt.find_all(exp.Select):
                 source = select.args.get("from_")
                 if select is stmt and source and isinstance(source.this, exp.Subquery) and isinstance(source.this.this, exp.Union):
                     continue  # generated UNION cap; inner projections/columns remain checked
                 if any(isinstance(item, exp.Star) or (isinstance(item, exp.Column) and isinstance(item.this, exp.Star)) for item in select.expressions):
-                    raise ValueError("Projection stars can expose customer PII; COUNT(*) is allowed.")
+                    raise ValueError("SELECT * could expose columns this department may not read; name the columns (COUNT(*) is allowed).")
     try:
         qualify(stmt.copy(), dialect="mysql", schema=schema, infer_schema=False, validate_qualify_columns=True)
     except Exception as exc:

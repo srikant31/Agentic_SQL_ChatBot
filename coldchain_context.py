@@ -22,13 +22,11 @@ def get_coldchain_engine():
 
 
 def get_schema_context(question="", role="viewer", engine=None):
-    if role not in {"viewer", "admin"}:
-        raise ValueError("Unknown analytics role.")
+    from departments import allowed_tables, hidden_columns, outside_scope_text
+    allowed, hidden = allowed_tables(role), hidden_columns(role)   # raises ValueError for unknown roles
     engine = engine if engine is not None else get_coldchain_engine()
     inspector = inspect(engine)
-    names = set(inspector.get_table_names()) & set(_SCHEMA)
-    if role == "viewer":
-        names.discard("employees")
+    names = set(inspector.get_table_names()) & set(_SCHEMA) & allowed
     if not names:
         raise ValueError("No approved ColdChain tables exist in the configured database.")
     records, schema = [], {}
@@ -39,7 +37,7 @@ def get_schema_context(question="", role="viewer", engine=None):
             schema[table] = {}
             for col in inspector.get_columns(table):
                 name = col["name"]
-                if role == "viewer" and name.lower() in {"email", "salary_inr"}:
+                if name.lower() in hidden:
                     continue
                 schema[table][name] = str(col["type"])
                 entry = {"name": name, "type": str(col["type"]), "comment": col.get("comment") or "",
@@ -65,7 +63,8 @@ def get_schema_context(question="", role="viewer", engine=None):
     glossary = (Path(__file__).parent / "golden_eval/business_glossary.md").read_text(encoding="utf-8")
     return {"schema": schema, "database": engine.url.database or "coldchain",
             "text": "Evaluation date: 2026-06-30. Never use NOW() or CURDATE().\n"
-                    + json.dumps(records, default=str) + "\n" + glossary}
+                    + json.dumps(records, default=str) + "\n" + glossary
+                    + ("\n" + outside_scope_text(role) if outside_scope_text(role) else "")}
 
 
 def execute_readonly(sql, role, engine=None):
