@@ -4,6 +4,78 @@ This document describes the actual local project state and the latest chat/feedb
 
 ## Latest update: ColdChain is the main app
 
+### Subsequent LangSmith tracing update
+
+#### Real app smoke test after authentication
+
+The user requested safe summaries and one live March-orders question. `_safe_in` now
+records argument lengths/types; `_safe_out` records output keys and a bounded status.
+They replace the custom spans' empty dictionaries. The global payload-hide defaults
+and private hide flags remain true, so those flags still suppress span payloads.
+Full prompts/results were not enabled while awaiting the user's privacy preference.
+After this test the user explicitly chose “Show fictional prompts and results.”
+Both private `.env` hide flags were then set to `false`, with an outside-repository
+backup. Future LangGraph/model runs can include prompts, SQL and fictional rows;
+the completed test's payloads remain hidden retroactively. Custom decorated spans
+still use the shape-only sanitizers. Code defaults stay `true`. No additional paid
+run was made after that privacy choice. Restore hiding before using real data.
+Existing workspace allowlisting and `coldchain_turn` metadata were preserved.
+
+Groq's real model list returned HTTP 200 and included `openai/gpt-oss-120b`.
+Only the private tracing/model lines were set to `true` / `openai/gpt-oss-120b`, after
+an outside-repository backup. No database credentials or API-key values were changed.
+
+The actual `sqlapp.py` was exercised through Streamlit AppTest without mocks:
+fictional employee login, user question, model classification/generation, visible
+explanation/SQL, and a click of `Approve & run` against real Aiven MySQL.
+Question: “How many orders were placed in March 2026?”
+
+```sql
+SELECT COUNT(*) AS orders_placed FROM orders
+WHERE order_date >= '2026-03-01' AND order_date < '2026-04-01'
+LIMIT 100
+```
+
+Returned `orders_placed = 60`, with no execution error. The explanation correctly
+described the half-open March interval and inclusion of all statuses. This is one
+integration smoke test, not an accuracy evaluation or manual browser verification.
+An initial attempt generated a proposal but the diagnostic command failed printing
+a Unicode explanation through Windows cp1252, before approval or SQL execution.
+The same question was repeated with UTF-8 output: therefore this cost two proposal
+passes and one approved execution/summary, not just three model calls total.
+
+The successful run stored two error-free `coldchain_turn` roots (proposal and resume)
+in project `sql-chatbot`, with viewer role, the selected model, `agent_id=sql-chatbot`,
+and `agent_environment=local`. Both root inputs and outputs were confirmed hidden.
+Evidence: uncommitted `coldchain-live-smoke-2026-11-16.json` (fictional data only).
+The 19 targeted observability/graph/chat tests passed after the sanitizer change.
+The final full offline suite passed **247 tests in 20.77 seconds**.
+No push, deployment, old-database deletion, or key revocation was performed.
+
+The user explicitly requested installation of `langchain-ai/langsmith-skills` and use
+of `langsmith-trace`. All seven skills were installed into the local Codex skills
+directory using the system skill installer; the trace skill was read and applied.
+
+- Private `.env` tracing settings now use endpoint `https://apac.api.smith.langchain.com`,
+  `LANGSMITH_AGENT_ID=sql-chatbot`, `LANGSMITH_AGENT_ENVIRONMENT=local`, and
+  `LANGSMITH_TRACING=true`. An outside-repository backup was made before editing.
+  No credentials, database settings or provider/model settings were changed.
+- `observability.py` allows these identity/workspace settings from Streamlit secrets,
+  defaults to APAC and the requested identity, and uses synchronous LangChain callbacks.
+  Custom redacted spans include agent identity metadata. Payload hiding remains enabled.
+- `checkpointing.thread_config` names graph roots `coldchain_turn` and adds agent ID,
+  environment, model and role metadata. LangGraph's automatic callbacks supply nested
+  node/model traces; no extra manual wrapping of interrupt nodes was introduced.
+- A real APAC SDK auth check succeeded. A tiny trace named
+  `sql-chatbot.tracing_smoke` was written and read back from project `sql-chatbot`;
+  both agent identity metadata values were verified. No LLM or database call was made.
+  This proves tracing connectivity/storage, not a live agent's SQL quality.
+- The full offline suite passed **246 tests in 22.93 seconds**, with tracing disabled
+  for tests. The tracing update has not been committed, pushed or deployed.
+- Earlier US/EU 403 checks are historical; the APAC connection now works. The older
+  statements below that tracing stayed disabled refer to the prior evaluation/UI work.
+- The user's decision to retain `defaultdb` until ColdChain is deployed still applies.
+
 The user subsequently asked: “remove the whole previous DB; I want the new ColdChain DB
 to be the main DB our SQL agent uses.” This update supersedes older descriptions below
 of an employee main app and a separate opt-in ColdChain page.

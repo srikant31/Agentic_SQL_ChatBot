@@ -48,9 +48,10 @@ The graph state has a `model_calls` field. `classify`, `generate` and `summarize
 
 ## 3. LangSmith (`observability.py`)
 
-- `LANGSMITH_WORKSPACE_ID` is now copied from Streamlit secrets.
+- `LANGSMITH_WORKSPACE_ID`, `LANGSMITH_AGENT_ID` and `LANGSMITH_AGENT_ENVIRONMENT` are copied from Streamlit secrets. The endpoint defaults to APAC (`https://apac.api.smith.langchain.com`), where this project's LangSmith organisation lives.
+- Trace statuses are kept only if they are known application values; anything else could be model text and is dropped.
 - `@redacted_trace` keeps the shape of inputs and outputs (character counts, list lengths, keys, status) without their text.
-- Every graph call gets its own `run_id`, `run_name` (`coldchain_proposal` / `coldchain_run`) and metadata (`request_id`, `version`, `model`, `role`). The same run ID is saved in the event row.
+- Every graph call gets its own `run_id`. Roots keep the name `coldchain_turn` (from `checkpointing.thread_config`), with metadata `step` (`proposal` or `run`), `request_id`, `version`, `model`, `role`, `agent_id` and `agent_environment`. The same run ID is saved in the event row.
 - 👍/👎 is sent to LangSmith as feedback key `user_vote` (1 or 0) on that run. This only happens when tracing is on, and a failure only loses the feedback.
 - `LANGSMITH_HIDE_INPUTS`/`OUTPUTS` still default to `true`, which hides prompts in model traces. Set them to `false` in `.env` to see prompts for fictional data.
 

@@ -49,10 +49,11 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
     who = {"username": user.username, "display_name": user.display_name or user.username, "role": role}
 
     def traced(name, request):
-        """Per-call config: a fresh LangSmith run ID, tagged with this request and version."""
+        """Per-call config: a fresh LangSmith run ID. The root keeps the name coldchain_turn;
+        `step` says whether this turn was a proposal or an approved run."""
         run_id = uuid.uuid4()
-        call_cfg = {**cfg, "run_id": run_id, "run_name": name,
-                    "metadata": {**cfg.get("metadata", {}), "request_id": request["id"],
+        call_cfg = {**cfg, "run_id": run_id,
+                    "metadata": {**cfg.get("metadata", {}), "step": name, "request_id": request["id"],
                                  "version": request["rewrites"]}}
         return call_cfg, str(run_id)
 
@@ -83,7 +84,7 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
         save_closed_chat()
         started, extra_calls = time.perf_counter(), 0
         elapsed = lambda: int((time.perf_counter() - started) * 1000)
-        call_cfg, run_id = traced("coldchain_proposal", request)
+        call_cfg, run_id = traced("proposal", request)
         try:
             with st.spinner("Preparing your updated ColdChain proposal..." if rewrite else "Preparing your ColdChain proposal..."), \
                  prompts_for(request, run_id):
@@ -128,7 +129,7 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
             current = graph.get_state(cfg)
             if proposal["owner"] != user.username or proposal["request_id"] != request["id"] or proposal["revision"] != request["rewrites"] or current.values.get("question") != request["current_question"] or current.values.get("sql") != proposal["sql"] or not any(task.interrupts for task in current.tasks):
                 raise PermissionError("This proposal is no longer active. Request a fresh proposal.")
-            call_cfg, run_id = traced("coldchain_run", request)
+            call_cfg, run_id = traced("run", request)
             before = current.values.get("model_calls", 0)
             with prompts_for(request, run_id):
                 output = graph.invoke(Command(resume={"action": "approve"}), call_cfg)

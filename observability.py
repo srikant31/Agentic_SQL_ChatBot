@@ -2,10 +2,16 @@
 import os
 
 SETTINGS = ("LANGSMITH_API_KEY", "LANGSMITH_TRACING", "LANGSMITH_PROJECT",
-            "LANGSMITH_ENDPOINT", "LANGSMITH_WORKSPACE_ID", "LANGSMITH_HIDE_INPUTS",
-            "LANGSMITH_HIDE_OUTPUTS", "GROQ_API_KEY", "GROQ_LLM_MODEL", "LLM_PROVIDER",
-            "SQL_WORKFLOW", "PG_URL", "COLDCHAIN_DB_URL", "EVAL_DB_URL", "COLDCHAIN_ADMIN_USERS",
+            "LANGSMITH_ENDPOINT", "LANGSMITH_HIDE_INPUTS", "LANGSMITH_HIDE_OUTPUTS",
+            "LANGSMITH_WORKSPACE_ID", "LANGSMITH_AGENT_ID", "LANGSMITH_AGENT_ENVIRONMENT",
+            "GROQ_API_KEY", "GROQ_LLM_MODEL", "LLM_PROVIDER", "SQL_WORKFLOW",
+            "PG_URL", "COLDCHAIN_DB_URL", "EVAL_DB_URL", "COLDCHAIN_ADMIN_USERS",
             "FEEDBACK_DB_URL", "FEEDBACK_STORE_TEXT")
+
+# Statuses are application enums; anything else could be model text, so it is dropped from traces.
+TRACE_STATUSES = {"proposal", "proposed", "complete", "error", "denied", "refuse", "clarify", "proceed",
+                  "unsupported", "provider_error", "source_error", "give_up", "generated", "validated",
+                  "invalid", "rejected", "chat_error", "chat_pending", "no_query"}
 
 
 def configure_observability(secrets=None):
@@ -15,6 +21,12 @@ def configure_observability(secrets=None):
                 os.environ[key] = str(secrets[key])
     os.environ.setdefault("LANGSMITH_TRACING", "false")
     os.environ.setdefault("LANGSMITH_PROJECT", "sql-chatbot")
+    # This project's LangSmith organisation lives in the APAC region; US/EU endpoints return 403.
+    os.environ.setdefault("LANGSMITH_ENDPOINT", "https://apac.api.smith.langchain.com")
+    os.environ.setdefault("LANGSMITH_AGENT_ID", "sql-chatbot")
+    os.environ.setdefault("LANGSMITH_AGENT_ENVIRONMENT", "local")
+    # Run callbacks in the foreground so traces are not lost when Streamlit reruns the script.
+    os.environ.setdefault("LANGCHAIN_CALLBACKS_BACKGROUND", "false")
     os.environ.setdefault("LANGSMITH_HIDE_INPUTS", "true")
     os.environ.setdefault("LANGSMITH_HIDE_OUTPUTS", "true")
 
@@ -26,6 +38,11 @@ def load_streamlit_settings():
         configure_observability(st.secrets)
     except FileNotFoundError:
         configure_observability()
+
+
+def agent_metadata():
+    return {"agent_id": os.getenv("LANGSMITH_AGENT_ID", "sql-chatbot"),
+            "agent_environment": os.getenv("LANGSMITH_AGENT_ENVIRONMENT", "local")}
 
 
 def tracing_enabled():
@@ -47,6 +64,7 @@ def _shape(value):
 
 
 def sanitize_inputs(inputs):
+    """Keep argument shape, never question/schema text or nested values."""
     if not isinstance(inputs, dict):
         return {"type": type(inputs).__name__}
     return {str(key): _shape(value) for key, value in inputs.items()}
@@ -54,17 +72,20 @@ def sanitize_inputs(inputs):
 
 def sanitize_outputs(output):
     if isinstance(output, dict):
-        safe = {"keys": sorted(str(key) for key in output)}
         status = output.get("status")
-        if isinstance(status, str) and len(status) <= 40:
-            safe["status"] = status
-        return safe
-    return {"output": _shape(output)}
+        return {"keys": sorted(str(key) for key in output),
+                "status": status if isinstance(status, str) and status in TRACE_STATUSES else None}
+    return {"type": type(output).__name__}
+
+
+# Names used by the earlier local tracing work.
+_safe_in, _safe_out = sanitize_inputs, sanitize_outputs
 
 
 def redacted_trace(name):
     from langsmith import traceable
-    return traceable(name=name, process_inputs=sanitize_inputs, process_outputs=sanitize_outputs)
+    return traceable(name=name, metadata=agent_metadata(),
+                     process_inputs=sanitize_inputs, process_outputs=sanitize_outputs)
 
 
 _CLIENT = None

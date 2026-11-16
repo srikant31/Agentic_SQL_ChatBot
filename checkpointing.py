@@ -37,10 +37,12 @@ def get_checkpointer():
 
 def thread_config(user, tid, role, model):
     from rbac import check_user
+    from observability import agent_metadata
     check_user(user)
     # Auth already exists: bind thread IDs to server-owned identity AND policy role.
     # TODO replace shared demo identities before allowing private production data.
     token = str(uuid.UUID(str(tid)))
     owner = hashlib.sha256(f"{user.username}:{role}".encode()).hexdigest()
     return {"configurable": {"thread_id": f"coldchain:{owner}:{token}"}, "recursion_limit": 40,
-            "tags": ["sql-chatbot"], "metadata": {"model": model, "role": role}}
+            "run_name": "coldchain_turn", "tags": ["sql-chatbot"],
+            "metadata": {**agent_metadata(), "model": model, "role": role}}

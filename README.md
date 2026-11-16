@@ -48,6 +48,31 @@ email and salaries. Replace the public demo authentication before connecting pri
 Optional `PG_URL` enables PostgreSQL checkpoints. Otherwise the UI warns that in-memory
 approvals do not survive app sleep or restart. Pending reviews use user/role-scoped UUIDs.
 
+### LangSmith tracing
+
+Local tracing is enabled in the private `.env` with the APAC endpoint
+`https://apac.api.smith.langchain.com`, agent ID `sql-chatbot`, and agent environment
+`local`. APAC authentication and storage/readback of a tiny diagnostic trace were
+verified in the configured `sql-chatbot` project. This used no LLM or database calls.
+LangGraph provides automatic graph/node/model tracing when `LANGSMITH_TRACING=true`.
+ColdChain turns have the run name `coldchain_turn` and model, role, agent ID and
+environment metadata. Inputs/outputs remain hidden by default to protect questions,
+SQL and database rows; custom function spans also redact their payloads.
+
+The March-orders live smoke test exercised the real app controls, Groq and Aiven:
+it returned **60 orders** for March 2026 and stored two error-free `coldchain_turn`
+roots (proposal and approval/resume). See the dated handoff for the encoding-related
+diagnostic retry and exact evidence; this is a smoke test, not an accuracy estimate.
+Afterward, the user authorized full fictional-data tracing: local `.env` hide flags
+are now `false` for future runs. Existing smoke traces remain hidden. Code defaults
+stay private, and custom spans retain shape-only summaries. Re-enable hiding before
+connecting real data. The final offline suite passed 247 tests.
+
+For Cloud, add `LANGSMITH_ENDPOINT`, `LANGSMITH_AGENT_ID`,
+`LANGSMITH_AGENT_ENVIRONMENT`, `LANGSMITH_TRACING=true`, `LANGSMITH_PROJECT`, and the
+private API key to Streamlit Secrets. Only set `LANGSMITH_WORKSPACE_ID` if your key
+requires it. These settings are allowlisted; no hosted secrets or deployment were changed.
+
 ## Database retirement and deployment
 
 The old source is `defaultdb`, containing only `EMPLOYEES`, `RBAC_DEMO_EMPLOYEES`
