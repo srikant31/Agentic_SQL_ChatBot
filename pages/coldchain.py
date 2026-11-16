@@ -1,0 +1,50 @@
+"""Primary ColdChain analytics screen, with review before every execution."""
+import os
+import uuid
+import streamlit as st
+import config  # bootstrap env/secrets before model/graph imports
+from app_auth import require_login, coldchain_role
+from checkpointing import get_checkpointer, thread_config
+from coldchain_context import get_coldchain_engine
+from coldchain_graph import build_graph
+from sql_generator import provider_settings
+from diagnostics import log_failure
+from theme import apply_theme
+
+
+st.set_page_config(page_title="ColdChain analytics", page_icon="📦", layout="wide")
+apply_theme()
+user = require_login(domain="coldchain")
+st.title("ColdChain analytics")
+st.caption("Main database: ColdChain · Aiven MySQL · read-only queries")
+st.caption("Fictional ColdChain evaluation data. Relative dates use 2026-06-30.")
+if not (os.getenv("COLDCHAIN_DB_URL") or os.getenv("EVAL_DB_URL")):
+    st.error("ColdChain is not configured. Add the read-only COLDCHAIN_DB_URL and AIVEN_CA_CERT in Streamlit Secrets, then restart the app.")
+    st.stop()
+
+# Existing demo IT-admin does not automatically gain salary/PII permissions in a new domain.
+role = coldchain_role(user)
+with st.expander("What can I ask?"):
+    st.write("Ask about orders, customers, products, warehouses, carriers, shipments and temperature readings.")
+    st.write("For example: How many orders were placed in March 2026? Which carriers have the most delivered shipments?")
+try:
+    resource = get_checkpointer()
+    if not resource.persistent:
+        st.warning("In-memory approvals will not survive a restart or app sleep.")
+    engine = get_coldchain_engine()
+    graph = build_graph(resource.saver, engine=engine, review_all=True, max_attempts=1, explain_sql=True)
+    try:
+        tid = str(uuid.UUID(st.query_params.get("tid", "")))
+    except (ValueError, TypeError):
+        tid = str(uuid.uuid4())
+        st.query_params["tid"] = tid
+    cfg = thread_config(user, tid, role, provider_settings()[4])
+    snapshot = graph.get_state(cfg)
+except Exception as exc:
+    log_failure("coldchain_setup_failed", exc)
+    st.error("ColdChain storage/source could not be initialized. Check the configured URLs and permissions.")
+    st.stop()
+
+from coldchain_chat_ui import render_coldchain_chat
+
+render_coldchain_chat(graph, cfg, user, role, snapshot)

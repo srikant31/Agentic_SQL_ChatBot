@@ -92,22 +92,6 @@ def test_blocks_show_tables():
         validate_readonly_sql("SHOW TABLES")
 
 
-@pytest.mark.xfail(
-    reason=(
-        "KNOWN GAP: sqlglot parses a parenthesized top-level SELECT as a "
-        "'Subquery' node, not 'Select'. isinstance() check misses this, so "
-        "a harmless query like '(SELECT * FROM EMPLOYEES)' is incorrectly "
-        "rejected. This is a false positive, not a security hole, but it's "
-        "a real bug worth fixing — see safety.py's isinstance check."
-    )
-)
-def test_allows_parenthesized_select():
-    """This SHOULD pass (it's a safe, read-only query) but currently
-    doesn't. Marked as an expected failure (xfail) rather than deleted,
-    so pytest tracks it as a known issue instead of it silently
-    disappearing from the test suite."""
-    validate_readonly_sql("(SELECT * FROM EMPLOYEES)")
-
 def test_allows_parenthesized_select():
     """Previously failed — a parenthesized SELECT parses as Subquery, not
     Select. Fixed by checking against sqlglot's Query base class instead."""

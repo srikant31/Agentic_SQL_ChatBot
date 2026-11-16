@@ -1,4 +1,98 @@
-# SQL Agent with LangChain
+# ColdChain SQL Agent
+
+ColdChain is now the **main and only database workflow** opened by `sqlapp.py`.
+It uses the existing `coldchain_eval` database on Aiven MySQL through the SELECT-only
+`coldchain_ro` account. Employee-demo initialization, editing and explorer pages have
+been removed from the main app navigation. Historical employee code and SQLite
+benchmarks remain available for regression tests, without being loaded by the main app.
+
+## Chat, explanations and feedback
+
+1. Type a ColdChain question about orders, shipments, carriers, customers or products.
+2. Read your original question, the model's explanation and its validated MySQL SQL.
+3. Choose **Looks good** or **Needs changes**. Negative feedback opens a textbox:
+   “Please prompt again and tell the model what to modify.”
+4. Request up to **three rewrites after the initial proposal**. Each revision replaces
+   the executable proposal and goes through fresh role/schema validation.
+5. Click **Approve & run** separately to execute. Feedback never executes SQL.
+   After rejecting the third rewrite, start a new question.
+
+The interactive graph has one generation attempt per proposal; the three human rewrites
+are its separate review budget. Default graph/evaluation behaviour remains unchanged.
+See [CHAT_REVIEW.md](CHAT_REVIEW.md) and [claude_handoff_16_11.md](claude_handoff_16_11.md).
+
+## Run locally
+
+```powershell
+.\venv\Scripts\python.exe -m streamlit run sqlapp.py
+```
+
+Keep the existing private `COLDCHAIN_DB_URL` in ignored `.env`, and the Aiven certificate
+at `ca.pem`. Its verified TLS query is `ssl_ca=ca.pem&ssl_check_hostname=true`.
+For Streamlit Cloud, privately copy the existing connection into **Secrets** under
+`COLDCHAIN_DB_URL`, together with `AIVEN_CA_CERT` and the provider settings. Do not paste
+credentials into chat or commit them. A missing ColdChain URL stops the app; there is
+no fallback to employee tables or privileged `MYSQL_*` credentials.
+
+Provider settings are `LLM_PROVIDER`, `GROQ_API_KEY` and `GROQ_LLM_MODEL` (or the
+existing Gemini equivalents). Keep an available model configured. The last real
+ColdChain measurement used `openai/gpt-oss-120b`; the older llama model returned 404s.
+This database promotion does not change the private model settings or make live LLM calls.
+
+The public fictional login accounts are retained for the demo. Every account defaults
+to ColdChain **viewer**, including the historical HR and IT-admin accounts.
+Only usernames explicitly listed in `COLDCHAIN_ADMIN_USERS` receive sensitive ColdChain
+access. Both roles still execute read-only SQL. Viewer access excludes employee records,
+email and salaries. Replace the public demo authentication before connecting private data.
+
+Optional `PG_URL` enables PostgreSQL checkpoints. Otherwise the UI warns that in-memory
+approvals do not survive app sleep or restart. Pending reviews use user/role-scoped UUIDs.
+
+## Database retirement and deployment
+
+The old source is `defaultdb`, containing only `EMPLOYEES`, `RBAC_DEMO_EMPLOYEES`
+and `RBAC_DEMO_AUDIT`. The new source is separate: `coldchain_eval`, with ten ColdChain
+tables and 60 customers verified on 16 November 2026.
+
+`scripts/retire_employee_database.py` defaults to **backup only**. It verifies TLS,
+the exact audited old/new identities, expected table set and absence of external
+foreign-key dependencies or stored objects. It writes data and a checksum manifest
+outside the repository. The explicitly destructive `--retire` option makes a fresh
+backup before dropping only `defaultdb`. Do not run it while an employee deployment
+still depends on that database. Backups contain data; keep them private.
+
+As last verified on 13 November, Streamlit deployed `main`. The saved `origin/main`
+code still initializes the employee source. These local changes are **uncommitted,
+unpushed and undeployed**. Do not assume the hosted app has switched databases.
+See the dated handoff for the actual retirement status and backup location.
+
+**User decision, 16 November:** retain `defaultdb` until ColdChain is deployed and
+verified. The backup is complete; no old database or tables have been deleted.
+
+## Validation and known limits
+
+- Main app routing, fail-closed configuration, role isolation, feedback, rewrite limits,
+  stale proposal rejection and explicit approval are covered by offline tests.
+- A read-only live connectivity check verifies the existing ColdChain source.
+- No new model-accuracy or LangSmith-success claim is made by this UI/database change.
+  Existing real measurements remain in [EVAL_RESULTS.md](EVAL_RESULTS.md).
+- Relative dates in the fictional fixture are anchored to `2026-06-30`.
+- Read-only SQL checks and glossary grounding do not prove query/result correctness.
+- Historical employee evaluation and context retrieval describe a different workflow;
+  they are retained as regression assets.
+
+ColdChain provisioning, glossary and evaluation details:
+[COLDCHAIN_SETUP.md](COLDCHAIN_SETUP.md).
+LangSmith/checkpoint documentation: [LANGGRAPH_LANGSMITH.md](LANGGRAPH_LANGSMITH.md).
+The dated handoff takes precedence over older architecture descriptions below.
+
+## Historical learning notes and employee walkthrough
+
+The remainder records earlier stages of this project. Employee examples, the original
+entry-point layout and older setup instructions below do not describe the current
+ColdChain main app.
+
+Detailed implementation log: [12/11/2026](12-11-2026.md), including feature internals, code excerpts and verification results.
 
 A hands-on project exploring how to connect Large Language Models to relational
 databases — starting from raw `sqlite3`, moving through `SQLAlchemy` as a
@@ -306,3 +400,4 @@ larger commits rather than a granular step-by-step history.*
 - **Deployment**: Streamlit Community Cloud, with the SSL certificate and
   credentials handled through the platform's secrets manager rather than a
   local file.
+git add pages/roadmap.py README.md .gitignore

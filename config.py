@@ -3,6 +3,19 @@ from dotenv import load_dotenv
 from urllib.parse import quote_plus
 
 load_dotenv()
+from observability import load_streamlit_settings
+load_streamlit_settings()
+
+
+# Streamlit Cloud has no way to "upload" ca.pem alongside secrets — only
+# key/value strings. So: if ca.pem isn't already sitting on disk (which it
+# will be locally), write it from an AIVEN_CA_CERT secret instead.
+if not os.path.exists("ca.pem"):
+    _ca_cert = os.getenv("AIVEN_CA_CERT")
+    if _ca_cert:
+        with open("ca.pem", "w") as _f:
+            _f.write(_ca_cert)
+
 
 MYSQL_USER = os.getenv("MYSQL_USER", "root")
 MYSQL_PASSWORD = quote_plus(os.getenv("MYSQL_PASSWORD", ""))
@@ -11,6 +24,15 @@ MYSQL_PORT = os.getenv("MYSQL_PORT", "3306")
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "ktl")
 
 DB_URI = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}?ssl_ca=ca.pem"
+
+# Optional least-privilege account for the question-answering path (SELECT on the demo employee table only).
+# When unset, reads fall back to the privileged account above, exactly as before.
+MYSQL_READONLY_USER = os.getenv("MYSQL_READONLY_USER", "")
+READONLY_DB_URI = (
+    f"mysql+pymysql://{MYSQL_READONLY_USER}:{quote_plus(os.getenv('MYSQL_READONLY_PASSWORD', ''))}"
+    f"@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}?ssl_ca=ca.pem"
+    if MYSQL_READONLY_USER else None
+)
 
 SAMPLE_QUESTIONS = [
     "Select a sample question...",
