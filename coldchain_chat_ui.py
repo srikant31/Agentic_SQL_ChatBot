@@ -8,6 +8,7 @@ from langgraph.types import Command
 from config import MAX_QUESTIONS_PER_SESSION
 from diagnostics import log_failure
 import feedback_store
+import prompt_log
 import sql_generator
 from observability import send_feedback
 from query_errors import error_message
@@ -44,8 +45,8 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
     st.caption("Review your question, explanation and SQL. Thumbs feedback lets you request up to three rewrites; it never runs SQL.")
     st.caption(f"Questions remaining: {max(remaining, 0)} / {MAX_QUESTIONS_PER_SESSION}")
 
-    owner = f"{user.username}:{role}"
     model = cfg.get("metadata", {}).get("model")
+    who = {"username": user.username, "display_name": user.display_name or user.username, "role": role}
 
     def traced(name, request):
         """Per-call config: a fresh LangSmith run ID, tagged with this request and version."""
@@ -56,9 +57,14 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
         return call_cfg, str(run_id)
 
     def log(event, request, version=None, **fields):
-        feedback_store.record(event, owner=owner, request_id=request["id"],
+        feedback_store.record(event, **who, request_id=request["id"],
                               version=request["rewrites"] if version is None else version,
                               model=model, route="direct", **fields)
+
+    def prompts_for(request, run_id):
+        """Tags every model call made inside this block with who asked, the question and the version."""
+        return prompt_log.bind(username=user.username, role=role, request_id=request["id"],
+                               version=request["rewrites"], model=model, run_id=run_id)
 
     def discard_pending():
         current = graph.get_state(cfg)
@@ -75,17 +81,18 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
     def generate(request, *, rewrite=False):
         # Persist the reserved rewrite before any provider request; refresh cannot reset its count.
         save_closed_chat()
-        started, run_id, extra_calls = time.perf_counter(), None, 0
+        started, extra_calls = time.perf_counter(), 0
         elapsed = lambda: int((time.perf_counter() - started) * 1000)
+        call_cfg, run_id = traced("coldchain_proposal", request)
         try:
-            with st.spinner("Preparing your updated ColdChain proposal..." if rewrite else "Preparing your ColdChain proposal..."):
+            with st.spinner("Preparing your updated ColdChain proposal..." if rewrite else "Preparing your ColdChain proposal..."), \
+                 prompts_for(request, run_id):
                 if rewrite:
                     extra_calls = 1  # the question-rewrite request runs outside the graph
                     request["current_question"] = sql_generator.rewrite_question(
                         request["original_question"], request["current_question"], request["modifications"])
                 history = [{"role": message["role"], "content": message["text"][:4000]}
                            for prior in chat["requests"] for message in prior["messages"]][:-1]
-                call_cfg, run_id = traced("coldchain_proposal", request)
                 output = graph.invoke({"question": request["current_question"], "history": history[-20:],
                     "role": role, "attempts": 0, "model_calls": 0, "approved": False, "refused": False,
                     "needs_clarification": False, "rows": [], "columns": [], "sql": "", "explanation": "",
@@ -95,23 +102,26 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
                     add_response(request, proposal={"sql": output["sql"], "explanation": output["explanation"],
                         "owner": user.username, "request_id": request["id"], "revision": request["rewrites"],
                         "trace_id": run_id})
-                    log("proposal", request, status="proposed", model_calls=calls,
-                        latency_ms=elapsed(), langsmith_run_id=run_id)
+                    log("proposal", request, status="proposed", model_calls=calls, latency_ms=elapsed(),
+                        langsmith_run_id=run_id, question=request["current_question"],
+                        sql=output["sql"], explanation=output["explanation"])
                 else:
                     add_response(request, message=output.get("answer", "No query was proposed."),
                                  error=output.get("status") in {"error", "give_up", "provider_error", "source_error"})
                     save_closed_chat(output.get("status", "chat_error"))
                     log("proposal", request, status=output.get("status", "no_query"), model_calls=calls,
-                        latency_ms=elapsed(), langsmith_run_id=run_id)
+                        latency_ms=elapsed(), langsmith_run_id=run_id, question=request["current_question"],
+                        message=output.get("answer"))
         except Exception as error:
             log_failure("coldchain_chat_proposal_failed", error)
             log("proposal", request, status="exception", model_calls=extra_calls or None,
-                latency_ms=elapsed(), langsmith_run_id=run_id)
+                latency_ms=elapsed(), langsmith_run_id=run_id, question=request["current_question"],
+                message=error_message(error))
             add_response(request, message=error_message(error), error=True)
             save_closed_chat("chat_error")
 
     def run_proposal(request):
-        status, run_id, rows_returned, calls = "complete", None, None, None
+        status, run_id, rows_returned, calls, answer = "complete", None, None, None, None
         started = time.perf_counter()
         try:
             proposal = latest_response(request)["proposal"]
@@ -120,7 +130,9 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
                 raise PermissionError("This proposal is no longer active. Request a fresh proposal.")
             call_cfg, run_id = traced("coldchain_run", request)
             before = current.values.get("model_calls", 0)
-            output = graph.invoke(Command(resume={"action": "approve"}), call_cfg)
+            with prompts_for(request, run_id):
+                output = graph.invoke(Command(resume={"action": "approve"}), call_cfg)
+            answer = output.get("answer")
             calls = max(output.get("model_calls", before) - before, 0)
             if output.get("status") != "complete":
                 raise ValueError(output.get("answer", "The query could not be executed."))
@@ -129,10 +141,12 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
         except Exception as error:
             status = "chat_error"
             log_failure("coldchain_chat_execution_failed", error)
-            record_result(request, error=error_message(error))
+            answer = error_message(error)
+            record_result(request, error=answer)
         save_closed_chat(status)
         log("run", request, status=status, rows_returned=rows_returned, model_calls=calls,
-            latency_ms=int((time.perf_counter() - started) * 1000), langsmith_run_id=run_id)
+            latency_ms=int((time.perf_counter() - started) * 1000), langsmith_run_id=run_id,
+            sql=(latest_response(request).get("proposal") or {}).get("sql"), message=answer)
 
     def handle(event, request):
         if event["action"] in {"positive", "negative"}:

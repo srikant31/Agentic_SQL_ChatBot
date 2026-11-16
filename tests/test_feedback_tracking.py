@@ -17,7 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def event(store, name, **fields):
-    return store.record(name, owner="employee:viewer", request_id="r1", version=fields.pop("version", 0), **fields)
+    return store.record(name, username="employee", display_name="Asha Verma", role="viewer",
+                        request_id="r1", version=fields.pop("version", 0), **fields)
 
 
 def test_summary_counts_questions_rewrites_calls_and_runs(tmp_path):
@@ -28,8 +29,8 @@ def test_summary_counts_questions_rewrites_calls_and_runs(tmp_path):
     event(store, "proposal", version=1, model_calls=3, status="proposed")
     event(store, "vote", version=1, vote="positive")
     event(store, "run", version=1, status="complete", rows_returned=1, model_calls=1)
-    store.record("proposal", owner="employee:viewer", request_id="r2", version=0, model_calls=2, status="proposed")
-    store.record("vote", owner="employee:viewer", request_id="r2", version=0, vote="positive")
+    store.record("proposal", username="hr", request_id="r2", version=0, model_calls=2, status="proposed")
+    store.record("vote", username="hr", request_id="r2", version=0, vote="positive")
     summary = store.summary()
     assert summary["questions"] == 2
     assert summary["accepted_first_proposal"] == 0.5          # r2 only; r1 needed a rewrite
@@ -39,15 +40,42 @@ def test_summary_counts_questions_rewrites_calls_and_runs(tmp_path):
     assert summary["votes_negative"] == 1 and summary["run_failure_rate"] == 0.0
 
 
-def test_hints_are_hashed_unless_text_storage_is_enabled(tmp_path, monkeypatch):
+def test_readable_text_and_names_are_stored_unless_text_storage_is_disabled(tmp_path, monkeypatch):
     store = feedback_store.FeedbackStore(f"sqlite:///{tmp_path}/events.sqlite")
-    event(store, "rewrite", version=1, hint="exclude cancelled orders")
-    monkeypatch.setenv("FEEDBACK_STORE_HINTS", "true")
-    event(store, "rewrite", version=2, hint="exclude cancelled orders")
+    event(store, "rewrite", version=1, hint="exclude cancelled orders", question="Sales in May")
+    monkeypatch.setenv("FEEDBACK_STORE_TEXT", "false")
+    event(store, "rewrite", version=2, hint="exclude cancelled orders", question="Sales in May")
     first, second = store.events()
-    assert first["hint_text"] is None and first["hint_chars"] == 24 and len(first["hint_sha"]) == 16
-    assert second["hint_text"] == "exclude cancelled orders"
-    assert first["session"] != "employee:viewer"              # usernames are never stored
+    assert (first["username"], first["display_name"], first["role"]) == ("employee", "Asha Verma", "viewer")
+    assert first["hint_text"] == "exclude cancelled orders" and first["question"] == "Sales in May"
+    assert second["hint_text"] is None and second["question"] is None    # numbers only for private data
+
+
+def test_earlier_hashed_schema_is_refused_with_a_clear_message(tmp_path):
+    from sqlalchemy import create_engine, text
+    url = f"sqlite:///{tmp_path}/old.sqlite"
+    with create_engine(url).begin() as connection:
+        connection.execute(text("CREATE TABLE query_events (id INTEGER PRIMARY KEY, session TEXT NOT NULL)"))
+    try:
+        feedback_store.FeedbackStore(url)
+        raise AssertionError("expected the old schema to be refused")
+    except RuntimeError as exc:
+        assert "Delete or rename" in str(exc)
+
+
+def test_rewrite_question_prompt_is_logged_only_inside_a_bound_chat(monkeypatch):
+    import prompt_log
+    import sql_generator
+    model = Mock()
+    model.invoke.return_value = Mock(content='{"question": "Count March orders"}', usage_metadata={"input_tokens": 50, "output_tokens": 9})
+    monkeypatch.setattr(sql_generator, "_build_llm", lambda provider, name: model)
+    sql_generator.rewrite_question("Count orders", "Count orders", ["only March"])      # not bound: not logged
+    with prompt_log.bind(username="employee", role="viewer", request_id="r9", version=1, model="m", run_id=None):
+        sql_generator.rewrite_question("Count orders", "Count orders", ["only March"])
+    (call,) = feedback_store.get_store().calls()
+    assert call["node"] == "rewrite_question" and call["request_id"] == "r9" and call["version"] == 1
+    assert "only March" in call["user_payload"] and "Rewrite the analytical question" in call["system_prompt"]
+    assert call["response_text"] == '{"question": "Count March orders"}' and call["input_tokens"] == 50
 
 
 def test_logging_failures_never_raise(tmp_path):
@@ -55,7 +83,7 @@ def test_logging_failures_never_raise(tmp_path):
     assert event(store, "not-an-event") is False
     with patch.object(feedback_store, "FeedbackStore", side_effect=RuntimeError("down")):
         feedback_store.reset_store()
-        assert feedback_store.record("proposal", owner="u", request_id="r", version=0) is False
+        assert feedback_store.record("proposal", username="u", request_id="r", version=0) is False
         assert feedback_store.get_store() is None                # gives up instead of retrying every click
 
 
@@ -118,7 +146,55 @@ def test_coldchain_chat_records_every_step_with_model_calls_and_trace_ids(monkey
     assert steps == [("proposal", 0, 2, "proposed"), ("vote", 0, None, "negative"), ("rewrite", 1, None, None),
                      ("proposal", 1, 3, "proposed"), ("vote", 1, None, "positive"), ("run", 1, 1, "complete")]
     assert llm.invoke.call_count == 5                          # graph counter agrees with the real calls (+1 rewrite mocked)
-    assert rows[-1]["rows_returned"] == 1 and rows[2]["hint_chars"] == len("Only March 2026")
+    assert rows[-1]["rows_returned"] == 1
     proposals = [r for r in rows if r["event"] == "proposal"]
     assert all(uuid.UUID(r["langsmith_run_id"]) for r in proposals)
     assert rows[4]["langsmith_run_id"] == proposals[1]["langsmith_run_id"]   # vote linked to the trace it judged
+    assert rows[0]["display_name"] == "Asha Verma" and rows[0]["question"] == "Count all orders"
+    assert rows[2]["hint_text"] == "Only March 2026" and "March 2026" in proposals[1]["explanation"]
+    assert rows[-1]["sql"].startswith("SELECT COUNT(*) FROM orders WHERE") and rows[-1]["message"] == "3 orders"
+
+    calls = feedback_store.get_store().calls()
+    assert [(c["node"], c["version"]) for c in calls] == [("classify", 0), ("generate", 0), ("classify", 1),
+                                                          ("generate", 1), ("summarize", 1)]
+    assert all(c["request_id"] == rows[0]["request_id"] and c["username"] == "employee" for c in calls)
+    assert "Classify this ColdChain analytics request" in calls[0]["system_prompt"]
+    assert "authorized ColdChain schema" in calls[1]["user_payload"] and "Count all orders" in calls[1]["user_payload"]
+    assert calls[3]["response_text"].startswith('{"sql"') and calls[4]["langsmith_run_id"] == rows[-1]["langsmith_run_id"]
+
+
+def test_admin_can_read_the_conversation_log_with_prompts(monkeypatch):
+    monkeypatch.setenv("COLDCHAIN_DB_URL", "offline-test-configured")
+    monkeypatch.setenv("COLDCHAIN_ADMIN_USERS", "employee")
+    store = feedback_store.get_store()
+    store.record("proposal", username="hr", display_name="Rohan Mehta", role="viewer", request_id="q1", version=0,
+                 status="proposed", question="Revenue in May", sql="SELECT 1", explanation="Adds up revenue.")
+    store.record("rewrite", username="hr", display_name="Rohan Mehta", role="viewer", request_id="q1", version=1,
+                 hint="exclude cancelled orders")
+    store.record_llm_call(node="generate", context={"username": "hr", "request_id": "q1", "version": 0, "model": "m"},
+                          system="Write exactly one MySQL SELECT", payload={"question": "Revenue in May"},
+                          response='{"sql": "SELECT 1"}', latency_ms=120, usage={"input_tokens": 900, "output_tokens": 30})
+    with patch("checkpointing.get_checkpointer", return_value=SimpleNamespace(saver=InMemorySaver(), persistent=True)), \
+         patch("coldchain_context.get_coldchain_engine", return_value=None):
+        app = AppTest.from_file(str(ROOT / "sqlapp.py"), default_timeout=20)
+        app.session_state["authenticated_username"] = "employee"
+        app.run()
+        assert "System performance (admins only)" in [e.label for e in app.expander]   # panel 7 unchanged
+        next(t for t in app.toggle if t.label.startswith("Show conversation log")).set_value(True).run()
+        assert not app.exception
+        labels = [e.label for e in app.expander]
+        assert any(label.startswith("Model call · generate · v0 · 120 ms · 900 in / 30 out") for label in labels)
+        page_text = " ".join(str(m.value) for m in app.markdown) + " ".join(str(c.value) for c in app.code)
+        assert "exclude cancelled orders" in page_text and "Adds up revenue." in page_text
+        assert "Write exactly one MySQL SELECT" in page_text and "SELECT 1" in page_text
+
+
+def test_viewers_do_not_see_the_conversation_log(monkeypatch):
+    monkeypatch.setenv("COLDCHAIN_DB_URL", "offline-test-configured")
+    monkeypatch.setenv("COLDCHAIN_ADMIN_USERS", "")
+    with patch("checkpointing.get_checkpointer", return_value=SimpleNamespace(saver=InMemorySaver(), persistent=True)), \
+         patch("coldchain_context.get_coldchain_engine", return_value=None):
+        app = AppTest.from_file(str(ROOT / "sqlapp.py"), default_timeout=20)
+        app.session_state["authenticated_username"] = "employee"
+        app.run()
+        assert not [t for t in app.toggle if t.label.startswith("Show conversation log")]

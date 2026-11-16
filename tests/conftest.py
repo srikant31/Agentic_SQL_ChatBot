@@ -33,7 +33,7 @@ def isolated_feedback_store(tmp_path, monkeypatch):
     """Every test writes feedback events to its own throwaway SQLite file, never to data/."""
     import feedback_store
     monkeypatch.setenv("FEEDBACK_DB_URL", f"sqlite:///{tmp_path}/feedback.sqlite")
-    monkeypatch.delenv("FEEDBACK_STORE_HINTS", raising=False)
+    monkeypatch.delenv("FEEDBACK_STORE_TEXT", raising=False)
     feedback_store.reset_store()
     yield
     feedback_store.reset_store()

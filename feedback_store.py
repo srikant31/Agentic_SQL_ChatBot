@@ -1,44 +1,76 @@
-"""Append-only record of what happened to each question: proposals, votes, rewrites and runs.
+"""What happened to each question, in readable form: a step log and a full prompt log.
 
-Storage choice: FEEDBACK_DB_URL, else PG_URL (the checkpoint Postgres), else a local SQLite file.
+Tables
+  query_events : one row per step (proposal, vote, rewrite, run, limit_reached), with the question,
+                 SQL, explanation, answer and the user's hint as readable text.
+  llm_calls    : one row per model request, with the exact system prompt, the user payload
+                 (question, schema context, glossary, history), the raw response, timing and tokens.
+
+Storage: FEEDBACK_DB_URL, else PG_URL (the checkpoint Postgres), else a local SQLite file.
 The ColdChain MySQL source is never written to; its account is read-only by design.
+FEEDBACK_STORE_TEXT=false keeps only numbers (for real, private data). Default: text is stored.
 Logging is best-effort: a storage failure is logged and the chat carries on.
 """
 from datetime import datetime, timezone
-import hashlib
 import json
 import os
 from pathlib import Path
 
 from sqlalchemy import (Column, DateTime, Integer, MetaData, String, Table, Text,
-                        create_engine, insert, select)
+                        create_engine, desc, insert, inspect, select)
 
 from diagnostics import log_failure
 
 EVENTS = {"proposal", "vote", "rewrite", "run", "limit_reached"}
 DEFAULT_SQLITE = Path(__file__).parent / "data" / "feedback_events.sqlite"
+TEXT_LIMIT = 200_000   # a schema-plus-glossary prompt is tens of KB; this keeps whole prompts
 
 metadata = MetaData()
+
 query_events = Table(
     "query_events", metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("ts", DateTime(timezone=True), nullable=False),
-    Column("session", String(16), nullable=False),        # hash of user+role, never the username
-    Column("request_id", String(36), nullable=False),     # one original question
-    Column("version", Integer, nullable=False),           # 0 = first proposal, 1.. = rewrites
+    Column("username", String(80), nullable=False),        # demo account id, e.g. "employee"
+    Column("display_name", String(120)),                   # fictional display name
+    Column("role", String(20)),                            # ColdChain role: viewer / admin
+    Column("request_id", String(36), nullable=False, index=True),   # one original question
+    Column("version", Integer, nullable=False),            # 0 = first proposal, 1.. = rewrites
     Column("event", String(20), nullable=False),
-    Column("route", String(20)),                          # "direct" now; "decomposed" later
+    Column("route", String(20)),                           # "direct" now; "decomposed" later
     Column("model", String(80)),
-    Column("model_calls", Integer),                       # calls made during THIS event
+    Column("model_calls", Integer),                        # model requests made during THIS step
     Column("latency_ms", Integer),
-    Column("status", String(30)),                         # graph status / outcome
+    Column("status", String(30)),                          # graph status / outcome
     Column("vote", String(10)),
-    Column("hint_chars", Integer),
-    Column("hint_sha", String(16)),
-    Column("hint_text", Text),                            # only when FEEDBACK_STORE_HINTS=true
+    Column("question", Text),                              # the question as sent at this step
+    Column("sql", Text),
+    Column("explanation", Text),
+    Column("message", Text),                               # answer, refusal or error shown to the user
+    Column("hint_text", Text),                             # the user's "What should change?" text
     Column("rows_returned", Integer),
     Column("langsmith_run_id", String(36)),
-    Column("detail", Text),                               # JSON for fields added later (rules, warnings)
+    Column("detail", Text),                                # JSON for later fields (rules applied, checks)
+)
+
+llm_calls = Table(
+    "llm_calls", metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("ts", DateTime(timezone=True), nullable=False),
+    Column("username", String(80)),
+    Column("role", String(20)),
+    Column("request_id", String(36), index=True),
+    Column("version", Integer),
+    Column("node", String(40), nullable=False),            # classify / generate / summarize / rewrite_question
+    Column("model", String(80)),
+    Column("system_prompt", Text),
+    Column("user_payload", Text),                          # JSON: question, history, schema context, glossary
+    Column("response_text", Text),
+    Column("error", String(200)),
+    Column("latency_ms", Integer),
+    Column("input_tokens", Integer),
+    Column("output_tokens", Integer),
+    Column("langsmith_run_id", String(36)),                # the proposal/run trace this call belongs to
 )
 
 
@@ -54,30 +86,47 @@ def database_url():
     return f"sqlite:///{DEFAULT_SQLITE}"
 
 
+def store_text():
+    return os.getenv("FEEDBACK_STORE_TEXT", "true").strip().lower() != "false"
+
+
+def _text(value):
+    if value is None or not store_text():
+        return None
+    return str(value)[:TEXT_LIMIT]
+
+
+def _int(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
 class FeedbackStore:
     def __init__(self, url=None):
         self.engine = create_engine(url or database_url(), pool_pre_ping=True)
-        metadata.create_all(self.engine, tables=[query_events])
+        existing = inspect(self.engine)
+        if existing.has_table("query_events") and "session" in {c["name"] for c in existing.get_columns("query_events")}:
+            raise RuntimeError("query_events uses the earlier hashed-session schema. Delete or rename that table "
+                               "(local file: data/feedback_events.sqlite) and restart.")
+        metadata.create_all(self.engine)
 
-    def record(self, event, *, owner, request_id, version, hint=None, detail=None, **fields):
-        """Write one event. Returns False instead of raising so the chat never fails on logging."""
+    def record(self, event, *, username, request_id, version, display_name=None, role=None, hint=None,
+               question=None, sql=None, explanation=None, message=None, detail=None, **fields):
+        """Write one step. Returns False instead of raising so the chat never fails on logging."""
         try:
             if event not in EVENTS:
                 raise ValueError("Unknown feedback event.")
-            row = {"ts": datetime.now(timezone.utc), "session": _digest(owner), "request_id": str(request_id),
-                   "version": int(version), "event": event}
+            row = {"ts": datetime.now(timezone.utc), "username": str(username)[:80], "request_id": str(request_id),
+                   "version": int(version), "event": event,
+                   "display_name": display_name and str(display_name)[:120], "role": role and str(role)[:20],
+                   "question": _text(question), "sql": _text(sql), "explanation": _text(explanation),
+                   "message": _text(message), "hint_text": _text(hint)}
             for key in ("route", "model", "status", "vote", "langsmith_run_id"):
                 if fields.get(key) is not None:
                     row[key] = str(fields[key])[:80]
             for key in ("model_calls", "latency_ms", "rows_returned"):
-                if isinstance(fields.get(key), int) and not isinstance(fields[key], bool):
-                    row[key] = fields[key]
-            if hint:
-                row["hint_chars"], row["hint_sha"] = len(hint), _digest(hint)
-                if os.getenv("FEEDBACK_STORE_HINTS", "false").strip().lower() == "true":
-                    row["hint_text"] = hint[:500]
+                row[key] = _int(fields.get(key))
             if detail:
-                row["detail"] = json.dumps(detail, default=str)[:4000]
+                row["detail"] = json.dumps(detail, default=str)[:20000]
             with self.engine.begin() as connection:
                 connection.execute(insert(query_events).values(**row))
             return True
@@ -85,16 +134,70 @@ class FeedbackStore:
             log_failure("feedback_record_failed", exc, feedback_event=str(event)[:20])
             return False
 
-    def events(self):
+    def record_llm_call(self, *, node, context=None, system=None, payload=None, response=None, error=None,
+                        latency_ms=None, usage=None):
+        try:
+            context = context or {}
+            usage = usage if isinstance(usage, dict) else {}
+            payload_text = payload if isinstance(payload, str) or payload is None else json.dumps(payload, default=str, ensure_ascii=False)
+            row = {"ts": datetime.now(timezone.utc), "node": str(node)[:40],
+                   "username": context.get("username"), "role": context.get("role"),
+                   "request_id": context.get("request_id"), "version": _int(context.get("version")),
+                   "model": context.get("model") and str(context["model"])[:80],
+                   "langsmith_run_id": context.get("run_id"),
+                   "system_prompt": _text(system), "user_payload": _text(payload_text),
+                   "response_text": _text(response), "error": error and str(error)[:200],
+                   "latency_ms": _int(latency_ms), "input_tokens": _int(usage.get("input_tokens")),
+                   "output_tokens": _int(usage.get("output_tokens"))}
+            with self.engine.begin() as connection:
+                connection.execute(insert(llm_calls).values(**row))
+            return True
+        except Exception as exc:
+            log_failure("llm_call_record_failed", exc)
+            return False
+
+    # ------------------------------------------------------------------ reading
+    def events(self, request_id=None):
+        query = select(query_events).order_by(query_events.c.id)
+        if request_id:
+            query = query.where(query_events.c.request_id == request_id)
         with self.engine.connect() as connection:
-            return [dict(row._mapping) for row in connection.execute(select(query_events).order_by(query_events.c.id))]
+            return [dict(row._mapping) for row in connection.execute(query)]
+
+    def calls(self, request_id=None):
+        query = select(llm_calls).order_by(llm_calls.c.id)
+        if request_id:
+            query = query.where(llm_calls.c.request_id == request_id)
+        with self.engine.connect() as connection:
+            return [dict(row._mapping) for row in connection.execute(query)]
+
+    def recent_requests(self, limit=50, username=None):
+        """Newest questions first: who asked, the original question, versions used and the outcome."""
+        query = select(query_events).order_by(desc(query_events.c.id)).limit(5000)
+        if username:
+            query = query.where(query_events.c.username == username)
+        with self.engine.connect() as connection:
+            rows = [dict(r._mapping) for r in connection.execute(query)]
+        requests = {}
+        for row in reversed(rows):   # oldest first, so the first question seen is the original
+            item = requests.setdefault(row["request_id"], {
+                "request_id": row["request_id"], "started": row["ts"], "username": row["username"],
+                "display_name": row["display_name"], "question": row["question"], "versions": 0, "outcome": "open"})
+            item["versions"] = max(item["versions"], row["version"] + 1)
+            if row["event"] == "run":
+                item["outcome"] = "ran" if row["status"] == "complete" else "run failed"
+            elif row["event"] == "limit_reached":
+                item["outcome"] = "rewrite limit reached"
+        return sorted(requests.values(), key=lambda r: r["started"], reverse=True)[:limit]
+
+    def timeline(self, request_id):
+        """Every step and every model call for one question, in time order."""
+        steps = [{"kind": "step", **row} for row in self.events(request_id)]
+        prompts = [{"kind": "model_call", **row} for row in self.calls(request_id)]
+        return sorted(steps + prompts, key=lambda item: (item["ts"], item["kind"] == "step"))
 
     def summary(self):
         return summarize(self.events())
-
-
-def _digest(text):
-    return hashlib.sha256(str(text).encode("utf-8")).hexdigest()[:16]
 
 
 def summarize(events):

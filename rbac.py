@@ -11,11 +11,12 @@ class User:
     username: str
     role: str
     department: str | None = None
+    display_name: str | None = None   # fictional name shown in logs and the conversation viewer
 
 USERS = {
-    "employee": User("employee", "employee", "Engineering"),
-    "hr": User("hr", "hr"),
-    "admin": User("admin", "it_admin"),
+    "employee": User("employee", "employee", "Engineering", "Asha Verma"),
+    "hr": User("hr", "hr", None, "Rohan Mehta"),
+    "admin": User("admin", "it_admin", None, "Neha Iyer"),
 }
 PERMISSIONS = {
     "employee": {"query"},

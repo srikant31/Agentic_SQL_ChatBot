@@ -61,5 +61,8 @@ if role == "admin":
             except Exception as exc:
                 log_failure("feedback_summary_failed", exc)
                 st.info("Feedback summary could not be loaded.")
+    if store is not None:
+        from conversation_log import render_conversation_log
+        render_conversation_log(store)
 
 render_coldchain_chat(graph, cfg, user, role, snapshot)
