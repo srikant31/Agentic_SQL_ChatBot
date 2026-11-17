@@ -74,7 +74,9 @@ def load_inputs(name):
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     records = [json.loads(l) for l in records_path.read_text(encoding="utf-8").splitlines() if l.strip()]
     check = json.loads(check_path.read_text(encoding="utf-8")) if check_path.exists() else None
-    return summary, records, check
+    usage_path = ROOT / "eval_runs" / "usage_stats.json"
+    usage = json.loads(usage_path.read_text(encoding="utf-8")) if usage_path.exists() else None
+    return summary, records, check, usage
 
 
 def section_counts(check):
@@ -107,7 +109,7 @@ def judge(summary, check, min_accuracy):
 
 
 # ---------------------------------------------------------------------------- PDF
-def build_pdf(summary, records, check, good, reasons, out_path):
+def build_pdf(summary, records, check, good, reasons, out_path, usage=None):
     from fpdf import FPDF
     from fpdf.fonts import FontFace
 
@@ -284,6 +286,58 @@ def build_pdf(summary, records, check, good, reasons, out_path):
     except Exception as exc:
         para(f"(Department summary unavailable: {type(exc).__name__})", 9, MUTED)
 
+    # ---- usage page: app database (Postgres) and LangSmith
+    if usage:
+        pdf.add_page()
+        heading("Real usage: app database and LangSmith", 15, gap=0)
+        f, l = usage.get("feedback_store", {}), usage.get("langsmith", {})
+        if "error" in f or not f:
+            para(f"App database unavailable ({f.get('error', 'not run')}).", 10, BAD)
+        else:
+            s = f["summary"]
+            share = lambda v: "n/a" if v is None else pct(v)
+            para(f"Source: {f['backend']} feedback store. {f['tables']['query_events']:,} query events and "
+                 f"{f['tables']['llm_calls']:,} logged model calls from {f['period']['first']} to {f['period']['last']}, "
+                 f"{f['users']} demo accounts.", 9.5, MUTED)
+            pdf.ln(2)
+            table([["Measure", "Value"],
+                   ["Questions asked", s.get("questions")],
+                   ["Accepted on the first proposal", share(s.get("accepted_first_proposal"))],
+                   ["Ended with a successful run", share(s.get("resolved_with_successful_run"))],
+                   ["Rewrites per question (average)", s.get("avg_rewrites_per_question")],
+                   ["Model calls per question (average)", s.get("avg_model_calls_per_question")],
+                   ["Questions that hit the 3-rewrite limit", s.get("rewrite_limit_reached")],
+                   ["Run failure rate", share(s.get("run_failure_rate"))],
+                   ["Votes positive / negative", f"{s.get('votes_positive')} / {s.get('votes_negative')}"],
+                   ["Questions by department", ", ".join(f"{k} {v}" for k, v in f["questions_by_role"].items()) or "-"],
+                   ["Reasons given for negative votes", ", ".join(f"{k} {v}" for k, v in f["negative_vote_reasons"].items()) or "-"]],
+                  (90, 90))
+            if f.get("model_calls_by_node"):
+                heading("Model calls by step (from the database log)", 11, gap=4)
+                rows = [["Step", "Calls", "Errors", "Median latency", "p90 latency", "Avg tokens in / out"]]
+                for node, n in f["model_calls_by_node"].items():
+                    ms = lambda v: f"{v / 1000:.1f} s" if v else "n/a"
+                    rows.append([node, n["calls"], n["errors"], ms(n["latency_median_ms"]), ms(n["latency_p90_ms"]),
+                                 f"{n['avg_input_tokens'] or 0:,} / {n['avg_output_tokens'] or 0:,}"])
+                table(rows, (40, 18, 18, 30, 30, 44), size=8.5)
+        heading("LangSmith projects", 12, gap=5)
+        if not l.get("available"):
+            para(f"LangSmith unavailable ({l.get('reason')}).", 10, BAD)
+        else:
+            rows = [["Project", "Traces", "Runs", "Median / p99", "Tokens", "Errors", "Feedback (average)"]]
+            for name, p in l["projects"].items():
+                if not p.get("found"):
+                    rows.append([name, "not found", "", "", "", "", ""])
+                    continue
+                lat = f"{p['latency_p50_s']} s / {p['latency_p99_s']} s" if p.get("latency_p50_s") is not None else "n/a"
+                fb = ", ".join(f"{k} {v['avg']} (n={v['n']})" for k, v in p["feedback"].items()) or "none"
+                err = pct(p["error_rate"]) if p.get("error_rate") is not None else "n/a"
+                tokens = f"{p['total_tokens']:,}" if p.get("total_tokens") is not None else "n/a"
+                rows.append([name, p.get("traces") if p.get("traces") is not None else "n/a", p.get("runs"), lat, tokens, err, fb])
+            table(rows, (36, 15, 14, 27, 20, 14, 54), size=8)
+            para("Traces: one per question or user turn. Runs: every step inside a trace (each model call, each graph "
+                 "node). 'correct' is the golden-set score; user votes are what people clicked, not correctness.", 8.5, MUTED)
+
     # ---- page 3+: per question
     pdf.add_page()
     heading("Every question in this run", 15, gap=0)
@@ -351,11 +405,11 @@ def main():
         print("The fpdf2 package is missing. Install it with: .\\venv\\Scripts\\python.exe -m pip install fpdf2")
         return 1
 
-    summary, records, check = load_inputs(args.name)
+    summary, records, check, usage = load_inputs(args.name)
     good, reasons = judge(summary, check, args.min_accuracy)
     stamp = datetime.now().strftime("%Y-%m-%d")
     preview = ROOT / "eval_runs" / f"ColdChain_evaluation_{stamp}.pdf"
-    build_pdf(summary, records, check, good, reasons, preview)
+    build_pdf(summary, records, check, good, reasons, preview, usage)
     print(f"Preview PDF: {preview.relative_to(ROOT)}")
     if not good:
         print("NOT GOOD - not published:")
