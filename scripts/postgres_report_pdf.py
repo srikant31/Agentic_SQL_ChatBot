@@ -28,36 +28,75 @@ from eval_report_pdf import ACCENT, BAD, GOOD, INK, LINE, MUTED, clean  # noqa: 
 from sqlalchemy import create_engine, text  # noqa: E402
 
 
-def queries(dialect):
+TEST_RUNS = "username LIKE 'test_run%'"
+
+
+def queries(dialect, scope):
     left = "LEFT(question, 60)" if dialect != "sqlite" else "SUBSTR(question, 1, 60)"
-    return [
-        ("What is stored",
-         "Rows in each table and how many distinct questions they cover.",
-         "SELECT (SELECT COUNT(*) FROM query_events) AS query_events,\n"
-         "       (SELECT COUNT(DISTINCT request_id) FROM query_events) AS questions,\n"
-         "       (SELECT COUNT(*) FROM llm_calls) AS llm_calls,\n"
-         "       (SELECT COUNT(DISTINCT username) FROM query_events) AS demo_accounts"),
-        ("Latest steps",
-         "Every user action is one row: question, proposal, approval, run, vote, rewrite.",
-         "SELECT ts, display_name, role, version, event, status, vote,\n"
-         f"       {left} AS question\n"
-         "FROM query_events ORDER BY id DESC LIMIT 15"),
-        ("Model calls by step",
-         "Every AI request is logged with its latency and token counts.",
-         "SELECT node, COUNT(*) AS calls,\n"
-         "       ROUND(AVG(latency_ms)) AS avg_ms,\n"
-         "       ROUND(AVG(input_tokens)) AS avg_in_tokens,\n"
-         "       ROUND(AVG(output_tokens)) AS avg_out_tokens,\n"
-         "       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) AS errors\n"
-         "FROM llm_calls GROUP BY node ORDER BY calls DESC"),
-        ("Questions and votes by department",
-         "Who uses the assistant, and how they rate it.",
-         "SELECT role,\n"
-         "       COUNT(DISTINCT request_id) AS questions,\n"
-         "       SUM(CASE WHEN vote = 'positive' THEN 1 ELSE 0 END) AS positive_votes,\n"
-         "       SUM(CASE WHEN vote = 'negative' THEN 1 ELSE 0 END) AS negative_votes\n"
-         "FROM query_events GROUP BY role ORDER BY questions DESC"),
-    ]
+    stored = ("What is stored",
+              "Rows in each table, and how many of them come from labelled test runs.",
+              "SELECT (SELECT COUNT(*) FROM query_events) AS query_events,\n"
+              "       (SELECT COUNT(*) FROM llm_calls) AS llm_calls,\n"
+              f"       (SELECT COUNT(DISTINCT request_id) FROM query_events WHERE {TEST_RUNS}) AS test_run_questions,\n"
+              f"       (SELECT COUNT(*) FROM llm_calls WHERE {TEST_RUNS}) AS test_run_llm_calls")
+    if scope == "test-runs":
+        return [stored,
+                ("Test runs",
+                 "Each test run is stored under its own user (test_run_1, test_run_2), so runs never mix. 'graded' rows "
+                 "hold the automatic PASS/FAIL result; test runs never write user votes.",
+                 "SELECT display_name AS run,\n"
+                 "       COUNT(DISTINCT request_id) AS questions,\n"
+                 "       SUM(CASE WHEN event = 'graded' AND status = 'PASS' THEN 1 ELSE 0 END) AS passed,\n"
+                 "       SUM(CASE WHEN event = 'graded' AND status = 'FAIL' THEN 1 ELSE 0 END) AS failed,\n"
+                 "       MIN(ts) AS started, MAX(ts) AS finished\n"
+                 f"FROM query_events WHERE {TEST_RUNS}\n"
+                 "GROUP BY display_name ORDER BY MIN(ts)"),
+                ("Results by department",
+                 "The department (role) each question was asked as.",
+                 "SELECT display_name AS run, role AS department,\n"
+                 "       COUNT(DISTINCT request_id) AS questions,\n"
+                 "       SUM(CASE WHEN event = 'graded' AND status = 'PASS' THEN 1 ELSE 0 END) AS passed,\n"
+                 "       SUM(CASE WHEN event = 'graded' AND status = 'FAIL' THEN 1 ELSE 0 END) AS failed\n"
+                 f"FROM query_events WHERE {TEST_RUNS}\n"
+                 "GROUP BY display_name, role ORDER BY MIN(ts), role"),
+                ("Latest graded questions",
+                 "One row per graded question, newest first.",
+                 "SELECT g.ts, g.display_name AS run, g.role AS department, g.status AS result,\n"
+                 f"       {left.replace('question', 'p.question')} AS question\n"
+                 "FROM query_events g JOIN query_events p\n"
+                 "  ON p.request_id = g.request_id AND p.event = 'proposal'\n"
+                 f"WHERE g.event = 'graded' AND g.{TEST_RUNS}\n"
+                 "ORDER BY g.id DESC LIMIT 15"),
+                ("Model calls by step (test runs)",
+                 "Every AI request made during the test runs, with latency and token counts.",
+                 "SELECT node, COUNT(*) AS calls,\n"
+                 "       ROUND(AVG(latency_ms)) AS avg_ms,\n"
+                 "       ROUND(AVG(input_tokens)) AS avg_in_tokens,\n"
+                 "       ROUND(AVG(output_tokens)) AS avg_out_tokens,\n"
+                 "       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) AS errors\n"
+                 f"FROM llm_calls WHERE {TEST_RUNS}\n"
+                 "GROUP BY node ORDER BY calls DESC")]
+    return [stored,
+            ("Latest steps",
+             "Every user action is one row: question, proposal, approval, run, vote, rewrite.",
+             "SELECT ts, display_name, role, version, event, status, vote,\n"
+             f"       {left} AS question\n"
+             "FROM query_events ORDER BY id DESC LIMIT 15"),
+            ("Model calls by step",
+             "Every AI request is logged with its latency and token counts.",
+             "SELECT node, COUNT(*) AS calls,\n"
+             "       ROUND(AVG(latency_ms)) AS avg_ms,\n"
+             "       ROUND(AVG(input_tokens)) AS avg_in_tokens,\n"
+             "       ROUND(AVG(output_tokens)) AS avg_out_tokens,\n"
+             "       SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) AS errors\n"
+             "FROM llm_calls GROUP BY node ORDER BY calls DESC"),
+            ("Questions and votes by department",
+             "Who uses the assistant, and how they rate it.",
+             "SELECT role,\n"
+             "       COUNT(DISTINCT request_id) AS questions,\n"
+             "       SUM(CASE WHEN vote = 'positive' THEN 1 ELSE 0 END) AS positive_votes,\n"
+             "       SUM(CASE WHEN vote = 'negative' THEN 1 ELSE 0 END) AS negative_votes\n"
+             "FROM query_events GROUP BY role ORDER BY questions DESC")]
 
 
 def fmt(value):
@@ -76,7 +115,7 @@ def fmt(value):
     return str(value)
 
 
-def build(out_path):
+def build(out_path, scope="test-runs"):
     from fpdf import FPDF
     from fpdf.fonts import FontFace
 
@@ -96,7 +135,7 @@ def build(out_path):
         events = [dict(r._mapping) for r in connection.execute(
             select(feedback_store.query_events).order_by(feedback_store.query_events.c.id))]
         summary = feedback_store.summarize(events)
-        for title, note, sql in queries(dialect):
+        for title, note, sql in queries(dialect, scope):
             result = connection.execute(text(sql))
             results.append((title, note, sql, list(result.keys()), [list(r) for r in result.fetchall()]))
 
@@ -149,10 +188,14 @@ def build(out_path):
     pdf.ln(3)
 
     share = lambda v: "n/a" if v is None else f"{100 * v:.0f}%"
-    pdf.set_font("Helvetica", "B", 13)
-    pdf.set_text_color(*INK)
-    pdf.cell(0, 8, "Headline numbers", new_x="LMARGIN", new_y="NEXT")
-    table([["Measure", "Value"],
+    if scope == "test-runs":
+        para("Showing labelled test runs only (users test_run_1, test_run_2, ...). Real app usage is stored in the same "
+             "tables but excluded here; run with --all to include it.", 9.5, ACCENT, "B")
+    if scope != "test-runs":
+      pdf.set_font("Helvetica", "B", 13)
+      pdf.set_text_color(*INK)
+      pdf.cell(0, 8, "Headline numbers", new_x="LMARGIN", new_y="NEXT")
+      table([["Measure", "Value"],
            ["Questions asked", summary.get("questions")],
            ["Accepted on the first proposal", share(summary.get("accepted_first_proposal"))],
            ["Ended with a successful run", share(summary.get("resolved_with_successful_run"))],
@@ -161,7 +204,7 @@ def build(out_path):
            ["Questions that hit the 3-rewrite limit", summary.get("rewrite_limit_reached")],
            ["Run failure rate", share(summary.get("run_failure_rate"))],
            ["Votes positive / negative", f"{summary.get('votes_positive')} / {summary.get('votes_negative')}"]], size=9)
-    para("Acceptance is what users clicked, not correctness; correctness comes from the golden-set evaluation.", 8.5, MUTED)
+      para("Acceptance is what users clicked, not correctness; correctness comes from the golden-set evaluation.", 8.5, MUTED)
 
     for i, (title, note, sql, columns, rows) in enumerate(results, 1):
         if pdf.get_y() > pdf.h - 80:
@@ -177,7 +220,9 @@ def build(out_path):
         pdf.multi_cell(0, 4, clean(sql), fill=True, align="L", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(1.5)
         if rows:
-            widths = (20, 26, 20, 13, 17, 19, 15, 50) if len(columns) == 8 else None
+            widths = {8: (20, 26, 20, 13, 17, 19, 15, 50), 5: None}.get(len(columns))
+            if title == "Latest graded questions":
+                widths = (22, 42, 24, 16, 76)
             table([columns] + rows, size=7.5 if len(columns) > 6 else 8.5, widths=widths)
         else:
             para("No rows yet.", 9, BAD)
@@ -191,6 +236,7 @@ def build(out_path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--publish", action="store_true", help="also copy the PDF to golden_eval/results/")
+    ap.add_argument("--all", action="store_true", help="include real app usage, not only labelled test runs")
     args = ap.parse_args()
     try:
         import fpdf  # noqa: F401
@@ -199,12 +245,12 @@ def main():
         return 1
     out = ROOT / "eval_runs" / f"Postgres_feedback_store_{datetime.now():%Y-%m-%d}.pdf"
     try:
-        backend, summary = build(out)
+        backend, summary = build(out, "all" if args.all else "test-runs")
     except Exception as exc:
         reason = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
         print(f"Could not build the report: {reason} (check FEEDBACK_DB_URL / PG_URL; details not shown).")
         return 1
-    print(f"Database: {backend}. Questions in store: {summary.get('questions')}.")
+    print(f"Database: {backend}. Scope: {'everything' if args.all else 'test runs only'}.")
     print(f"PDF: {out.relative_to(ROOT).as_posix()}")
     if args.publish:
         target = ROOT / "golden_eval" / "results" / out.name

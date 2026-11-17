@@ -198,3 +198,16 @@ def test_viewers_do_not_see_the_conversation_log(monkeypatch):
         app.session_state["authenticated_username"] = "employee"
         app.run()
         assert not [t for t in app.toggle if t.label.startswith("Show conversation log")]
+
+
+def test_test_runs_are_stored_but_excluded_from_usage_summary(tmp_path):
+    store = feedback_store.FeedbackStore(f"sqlite:///{tmp_path / 'events.sqlite'}")
+    store.record("proposal", username="sales", request_id="real", version=0, role="sales", model_calls=2)
+    store.record("vote", username="sales", request_id="real", version=0, role="sales", vote="positive")
+    for event, fields in (("proposal", {"model_calls": 2}), ("graded", {"status": "PASS"})):
+        assert store.record(event, username="test_run_1", display_name="Test run 1 - golden set",
+                            request_id="test", version=0, role="viewer", **fields)
+    assert {e["event"] for e in store.events()} == {"proposal", "vote", "graded"}
+    summary = store.summary()
+    assert summary["questions"] == 1 and summary["votes_positive"] == 1
+    assert summary["accepted_first_proposal"] == 1

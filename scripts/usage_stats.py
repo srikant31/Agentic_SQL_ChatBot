@@ -43,7 +43,9 @@ def feedback_numbers():
     url = feedback_store.database_url()
     backend = "Postgres" if url.startswith("postgresql") else "SQLite (local file)" if url.startswith("sqlite") else "other"
     store = feedback_store.FeedbackStore(url)
-    events, calls = store.events(), store.calls()
+    events = [e for e in store.events() if not feedback_store.is_test_run(e["username"])]
+    calls = [c for c in store.calls() if not feedback_store.is_test_run(c["username"])]
+    test_runs = sorted({e["display_name"] for e in store.events() if feedback_store.is_test_run(e["username"])})
     summary = feedback_store.summarize(events)
 
     asked = {e["request_id"] for e in events if e["event"] == "proposal"}
@@ -81,6 +83,7 @@ def feedback_numbers():
         "summary": summary, "questions_by_role": dict(roles.most_common()),
         "negative_vote_reasons": dict(reasons.most_common()), "model_calls_by_node": per_node,
         "users": len({e["username"] for e in events}),
+        "excluded_test_runs": test_runs,
     }
 
 
@@ -152,6 +155,8 @@ def to_markdown(data):
                 tok = f"{n['avg_input_tokens'] or 0:,} / {n['avg_output_tokens'] or 0:,}"
                 lines.append(f"| {node} | {n['calls']} | {n['errors']} | {lat} | {tok} |")
             lines.append("")
+    if f.get("excluded_test_runs"):
+        lines += ["Excluded from these numbers (labelled test runs): " + ", ".join(f["excluded_test_runs"]), ""]
     lines += ["## LangSmith", ""]
     if not l.get("available"):
         lines.append(f"Unavailable: {l.get('reason')}")

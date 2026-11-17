@@ -21,7 +21,8 @@ from sqlalchemy import (Column, DateTime, Integer, MetaData, String, Table, Text
 
 from diagnostics import log_failure
 
-EVENTS = {"proposal", "vote", "rewrite", "run", "limit_reached", "result_vote"}
+EVENTS = {"proposal", "vote", "rewrite", "run", "limit_reached", "result_vote",
+          "graded"}   # graded: written only by test runs (scripts/presentation_eval.py --store-run), never a user vote
 DEFAULT_SQLITE = Path(__file__).parent / "data" / "feedback_events.sqlite"
 TEXT_LIMIT = 200_000   # a schema-plus-glossary prompt is tens of KB; this keeps whole prompts
 
@@ -215,8 +216,14 @@ class FeedbackStore:
         return summarize(self.events())
 
 
+def is_test_run(username):
+    return str(username or "").startswith("test_run")
+
+
 def summarize(events):
     """Headline numbers. User acceptance is behaviour, not correctness: use the golden set for that."""
+    # Labelled test runs (users test_run_N, written by scripts/presentation_eval.py) are not real usage.
+    events = [e for e in events if not is_test_run(e.get("username"))]
     by_request = {}
     for event in events:
         by_request.setdefault(event["request_id"], []).append(event)
