@@ -110,6 +110,49 @@ from sql_generator import provider_settings  # noqa: E402
 
 OUT_DIR = ROOT / "eval_runs"
 
+# ---------------------------------------------------------------------------- database resilience
+# The free-tier database can drop a connection for a few seconds. A dropped connection is not the
+# model's fault, so: retry it, and if it keeps failing mark the question ERROR (not counted, resumable).
+CONNECTION_CODES = {2003, 2006, 2013, 2055}   # can't connect, server gone, lost connection, lost during read
+DB_FAILURES = []
+
+
+def _connection_error(exc):
+    from sqlalchemy.exc import DBAPIError, OperationalError
+    if isinstance(exc, DBAPIError) and getattr(exc, "connection_invalidated", False):
+        return True
+    if not isinstance(exc, OperationalError):
+        return False
+    original = getattr(exc, "orig", None)
+    code = original.args[0] if original is not None and getattr(original, "args", None) else None
+    return code in CONNECTION_CODES or "timed out" in str(exc).lower()
+
+
+def with_db_retry(function, attempts=4):
+    def wrapper(*args, **kwargs):
+        for attempt in range(attempts):
+            try:
+                return function(*args, **kwargs)
+            except Exception as exc:
+                if not _connection_error(exc):
+                    raise
+                if attempt == attempts - 1:
+                    DB_FAILURES.append(type(exc).__name__)
+                    raise
+                print(f"    database connection dropped; retrying in {5 * (attempt + 1)} s", flush=True)
+                time.sleep(5 * (attempt + 1))
+    return wrapper
+
+
+def install_db_retry():
+    import coldchain_context
+    import coldchain_graph
+    run_eval.run_sql = with_db_retry(run_eval.run_sql)
+    coldchain_context.get_schema_context = with_db_retry(coldchain_context.get_schema_context)
+    coldchain_graph.get_schema_context = coldchain_context.get_schema_context
+    coldchain_context.execute_readonly = with_db_retry(coldchain_context.execute_readonly)
+    coldchain_graph.execute_readonly = coldchain_context.execute_readonly
+
 
 # ---------------------------------------------------------------------------- helpers
 def git_commit():
@@ -413,6 +456,7 @@ def main():
         sys.exit(f"Unknown golden ids: {unknown}")
     cases = [by_id[i] for i in ids]
 
+    install_db_retry()
     from coldchain_context import get_coldchain_engine
     engine = get_coldchain_engine()
     _, _, _, _, model_name = provider_settings()
@@ -421,7 +465,11 @@ def main():
     print(f"Checking {len(cases)} reference queries on the database (no model calls)...")
     for c in cases:
         if c["kind"] == "sql" and "gold_sql" in c:
-            rows = run_eval.run_sql(engine, c["gold_sql"])
+            try:
+                rows = run_eval.run_sql(engine, c["gold_sql"])
+            except Exception as exc:
+                sys.exit(f"STOP: the database did not answer reference query {c['id']} after retries "
+                         f"({type(exc).__name__}). Nothing was spent; try again in a few minutes.")
             if len(rows) != c["expected_row_count"]:
                 sys.exit(f"STOP: reference query {c['id']} returned {len(rows)} rows, expected "
                          f"{c['expected_row_count']}. The database does not match the golden data.")
@@ -452,6 +500,7 @@ def main():
     pacer, consecutive_errors, stopped = TokenPacer(ARGS.tpm_budget), 0, None
     for n, case in enumerate(todo, 1):
         pacer.wait()
+        DB_FAILURES.clear()
         try:
             pred, info = predict(case, model_name, ARGS.name)
         except Exception as exc:
@@ -459,22 +508,27 @@ def main():
                          "model_calls": 0, "tokens": {"input": 0, "output": 0, "total": 0}, "ms": 0,
                          "api_errors": [type(exc).__name__], "provider_failed": True}
         pacer.add(info["tokens"]["total"], n - 1)
-        if info["provider_failed"]:
-            outcome, reason = "ERROR", f"API error ({', '.join(info['api_errors'])}); not counted"
+        if info["provider_failed"] or DB_FAILURES:
+            cause = "database connection" if DB_FAILURES else ", ".join(info["api_errors"])
+            outcome, reason = "ERROR", f"{'Database' if DB_FAILURES else 'API'} error ({cause}); not counted"
             consecutive_errors += 1
         else:
-            consecutive_errors = 0
             try:
                 ok, why = (grade_department(case, pred, engine) if case.get("department_check")
                            else run_eval.grade(case, pred, engine, validate))
             except Exception as exc:
                 ok, why = False, f"grading error: {type(exc).__name__}"
             outcome, reason = ("PASS" if ok else "FAIL"), ("" if ok else why)
+            if DB_FAILURES:      # the grader lost the database: not the model's fault
+                outcome, reason = "ERROR", "database connection lost while grading; not counted"
+                consecutive_errors += 1
+            else:
+                consecutive_errors = 0
         record = {"id": case["id"], "category": case["category"], "kind": case["kind"], "outcome": outcome,
                   "reason": reason, "question": case["question"], "predicted_kind": pred.get("kind"),
                   "predicted_sql": pred.get("sql") or "", **info}
         records[case["id"]] = record
-        if ARGS.store_run:
+        if ARGS.store_run and outcome != "ERROR":     # ERROR questions are rerun with --resume, saved then
             save_to_store(record, case, model_name)
         with store.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
@@ -482,7 +536,7 @@ def main():
               f"{info['ms'] / 1000:5.1f}s {info['tokens']['total']:>6} tok  attempts={info['attempts']}  {reason}")
         if consecutive_errors >= ARGS.max_consecutive_errors:
             stopped = ("daily_limit" in info["api_errors"] and "Groq's daily token limit was reached") or \
-                      "repeated API errors"
+                      ("the database kept dropping the connection" if DB_FAILURES else "repeated API errors")
             break
 
     ordered = [records[i] for i in ids if i in records]
@@ -497,8 +551,8 @@ def main():
     print("\n" + markdown)
     remaining = [i for i in ids if i not in records or records[i]["outcome"] == "ERROR"]
     if stopped or remaining:
-        print(f"STOPPED EARLY: {stopped or 'some questions had API errors'}. {len(remaining)} question(s) not graded: "
-              f"{','.join(remaining)}.\nRerun the same command with --resume once the limit resets.")
+        print(f"STOPPED EARLY: {stopped or 'some questions had API or database errors'}. {len(remaining)} question(s) not graded: "
+              f"{','.join(remaining)}.\nRerun the same command with --resume once the limit resets or the database is reachable again.")
         return 2
     print(f"Results: eval_runs/{ARGS.name}_summary.md, eval_runs/{ARGS.name}_summary.json, eval_runs/{ARGS.name}.jsonl")
     return 0
