@@ -10,6 +10,12 @@ with their own responses. The original question is never replaced by a model par
 - **Rewrite query** sends the original question, current complete request and all prior
   modifications to the model. Later changes override conflicting earlier ones. The complete
   updated request is displayed and goes through fresh authorization/context/SQL validation.
+- Under **Needs changes / Negative**, a proposed query also offers **The query does not
+  follow the business rules**. Select it and click **Rewrite query**, with optional details
+  naming the rule. The reason asks the rewrite to re-check the supplied glossary while
+  preserving the request; it is saved with the rewrite hint and a `business_rules` reason
+  in the ColdChain event log. Selecting it alone makes no model or SQL call. The normal
+  three-rewrite budget, permission checks and separate execution approval still apply.
 - Each original request allows **three rewrites after the initial proposal**. After a third
   rewritten response receives negative feedback, the UI shows an apology and requires a new
   question. Rerenders do not replenish the counter. ColdChain also checkpoints the reserved

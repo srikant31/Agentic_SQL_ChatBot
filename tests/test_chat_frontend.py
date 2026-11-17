@@ -104,7 +104,31 @@ def test_rewritten_question_is_authorized_again(employee_database):
         execute.assert_not_called()
 
 
-def test_coldchain_feedback_restores_rewrite_budget_and_requires_approval(monkeypatch):
+def test_business_rule_reason_keeps_details_and_resets_for_next_version(employee_database):
+    from query_chat import BUSINESS_RULES_REASON, BUSINESS_RULES_HINT
+    with patch("sql_generator.generate_sql", return_value=COUNT), patch("sql_generator.rewrite_question", return_value=QUESTION) as rewrite, patch("database.run_query") as execute:
+        app = AppTest.from_file(str(ROOT / "tests/fixtures/employee_app.py"), default_timeout=20)
+        app.session_state["authenticated_username"] = "hr"
+        app.run()
+        app.chat_input[0].set_value(QUESTION).run()
+        assert not any(box.label == BUSINESS_RULES_REASON for box in app.checkbox)
+        button(app, "Negative").click().run()
+        next(box for box in app.checkbox if box.label == BUSINESS_RULES_REASON).check().run()
+        area(app).set_value("x" * 2000).run()
+        assert button(app, "Rewrite query").disabled
+        assert app.session_state["employee_query_chat"]["requests"][-1]["rewrites"] == 0
+        area(app).set_value("Please apply the correct headcount definition.").run()
+        button(app, "Rewrite query").click().run()
+        assert not app.exception
+        hint = BUSINESS_RULES_HINT + "\n\nPlease apply the correct headcount definition."
+        rewrite.assert_called_once_with(QUESTION, QUESTION, [hint])
+        execute.assert_not_called()
+        button(app, "Negative").click().run()
+        assert not next(box for box in app.checkbox if box.label == BUSINESS_RULES_REASON).value
+
+
+@pytest.mark.parametrize("business_rules", [False, True])
+def test_coldchain_feedback_restores_rewrite_budget_and_requires_approval(monkeypatch, business_rules):
     monkeypatch.setenv("COLDCHAIN_DB_URL", "offline-test-configured")
     monkeypatch.setenv("COLDCHAIN_ADMIN_USERS", "")
     saver = InMemorySaver()
@@ -124,7 +148,7 @@ def test_coldchain_feedback_restores_rewrite_budget_and_requires_approval(monkey
         return real_build_graph(checkpointer, llm=llm, context_loader=context, executor=execute,
                                 review_all=kwargs["review_all"], max_attempts=kwargs["max_attempts"], explain_sql=kwargs["explain_sql"])
 
-    with patch("checkpointing.get_checkpointer", return_value=SimpleNamespace(saver=saver, persistent=True)), patch("coldchain_context.get_coldchain_engine", return_value=None), patch("coldchain_graph.build_graph", side_effect=build), patch("sql_generator.rewrite_question", return_value="Count March 2026 orders"):
+    with patch("checkpointing.get_checkpointer", return_value=SimpleNamespace(saver=saver, persistent=True)), patch("coldchain_context.get_coldchain_engine", return_value=None), patch("coldchain_graph.build_graph", side_effect=build), patch("sql_generator.rewrite_question", return_value="Count March 2026 orders") as rewrite, patch("feedback_store.record") as record:
         app = AppTest.from_file(str(ROOT / "sqlapp.py"), default_timeout=20)
         app.session_state["authenticated_username"] = "employee"
         app.run()
@@ -132,9 +156,22 @@ def test_coldchain_feedback_restores_rewrite_budget_and_requires_approval(monkey
         assert not app.exception
         execute.assert_not_called()
         button(app, "Negative").click().run()
-        area(app).set_value("Only March 2026").run()
+        if business_rules:
+            from query_chat import BUSINESS_RULES_REASON, BUSINESS_RULES_HINT
+            next(box for box in app.checkbox if box.label == BUSINESS_RULES_REASON).check().run()
+            assert not button(app, "Rewrite query").disabled
+            assert llm.invoke.call_count == 2
+            execute.assert_not_called()
+            hint = BUSINESS_RULES_HINT
+        else:
+            area(app).set_value("Only March 2026").run()
+            hint = "Only March 2026"
         button(app, "Rewrite query").click().run()
         assert not app.exception
+        rewrite.assert_called_once_with("Count all orders", "Count all orders", [hint])
+        saved_rewrite = next(call.kwargs for call in record.call_args_list if call.args[0] == "rewrite")
+        assert saved_rewrite["hint"] == hint
+        assert saved_rewrite["detail"] == ({"reason": "business_rules"} if business_rules else None)
         assert app.session_state["coldchain_query_chat"]["requests"][-1]["rewrites"] == 1
         del app.session_state["coldchain_query_chat"]
         app.run()

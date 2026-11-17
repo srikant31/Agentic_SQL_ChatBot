@@ -3,6 +3,9 @@ from copy import deepcopy
 import uuid
 
 MAX_REWRITES = 3
+BUSINESS_RULES_REASON = "The query does not follow the business rules"
+BUSINESS_RULES_HINT = (BUSINESS_RULES_REASON + ". Re-check and apply the supplied business glossary "
+                       "while preserving my request.")
 LIMIT_MESSAGE = "Sorry, I couldn't meet your needs after three rewrites. Please start a new question with more specific requirements."
 
 
@@ -213,11 +216,20 @@ def render_conversation(chat, prefix, *, run_label="Run this query", can_generat
                 if request["exhausted"]:
                     st.info(LIMIT_MESSAGE)
                 elif request["feedback_open"]:
+                    rules_mismatch = bool(proposal) and st.checkbox(
+                        BUSINESS_RULES_REASON, key=key + ":business_rules")
+                    if rules_mismatch:
+                        st.caption("The rewrite will re-check the business glossary. You can name the rule below; "
+                                   "the updated query will still need your approval.")
                     changes = st.text_area("What should change?", placeholder="Please prompt again and tell the model what to modify.",
                                            max_chars=2000, key=key + ":changes")
+                    hint = "\n\n".join(part for part in (BUSINESS_RULES_HINT if rules_mismatch else "", changes.strip()) if part)
+                    if len(hint) > 2000:
+                        st.warning("Shorten your modifications: the selected reason and text must fit within 2,000 characters.")
                     st.caption(f"{MAX_REWRITES - request['rewrites']} of {MAX_REWRITES} rewrites remaining")
-                    if st.button("Rewrite query", key=key + ":rewrite", disabled=not changes.strip() or not can_generate):
-                        return {"action": "rewrite", "version": entry["version"], "text": changes}
+                    if st.button("Rewrite query", key=key + ":rewrite", disabled=not hint or len(hint) > 2000 or not can_generate):
+                        return {"action": "rewrite", "version": entry["version"], "text": hint,
+                                "reason": "business_rules" if rules_mismatch else None}
                 if executable(request) and st.button(run_label, type="primary", key=key + ":run"):
                     return {"action": "run", "version": entry["version"]}
     return None

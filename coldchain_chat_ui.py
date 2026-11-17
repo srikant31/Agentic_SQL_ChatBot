@@ -223,7 +223,8 @@ def render_coldchain_chat(graph, cfg, user, role, snapshot):
                 log("limit_reached", request, version=event["version"])
         elif event["action"] == "rewrite" and remaining > 0:
             begin_rewrite(request, event["text"], event["version"])
-            log("rewrite", request, hint=event["text"].strip())
+            log("rewrite", request, hint=event["text"].strip(),
+                detail={"reason": "business_rules"} if event.get("reason") == "business_rules" else None)
             discard_pending()
             st.session_state.coldchain_questions_asked += 1
             generate(request, rewrite=True)
