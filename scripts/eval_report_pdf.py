@@ -76,7 +76,11 @@ def load_inputs(name):
     check = json.loads(check_path.read_text(encoding="utf-8")) if check_path.exists() else None
     usage_path = ROOT / "eval_runs" / "usage_stats.json"
     usage = json.loads(usage_path.read_text(encoding="utf-8")) if usage_path.exists() else None
-    return summary, records, check, usage
+    consistency_path = ROOT / "eval_runs" / "consistency.json"
+    consistency = json.loads(consistency_path.read_text(encoding="utf-8")) if consistency_path.exists() else None
+    if consistency and name not in consistency.get("runs", []):
+        consistency = None                      # a comparison of other runs does not belong in this report
+    return summary, records, check, usage, consistency
 
 
 def section_counts(check):
@@ -109,7 +113,7 @@ def judge(summary, check, min_accuracy):
 
 
 # ---------------------------------------------------------------------------- PDF
-def build_pdf(summary, records, check, good, reasons, out_path, usage=None):
+def build_pdf(summary, records, check, good, reasons, out_path, usage=None, consistency=None):
     from fpdf import FPDF
     from fpdf.fonts import FontFace
 
@@ -286,6 +290,28 @@ def build_pdf(summary, records, check, good, reasons, out_path, usage=None):
     except Exception as exc:
         para(f"(Department summary unavailable: {type(exc).__name__})", 9, MUTED)
 
+    # ---- consistency page: the same questions run twice
+    if consistency:
+        pdf.add_page()
+        heading("Consistency: the same questions, two separate runs", 15, gap=0)
+        c = consistency
+        run_a, run_b = c["runs"]
+        para("Each question was asked once per run. Running the set twice shows whether results are stable; two "
+             "runs are not enough for a precise variance.", 9.5, MUTED)
+        pdf.ln(2)
+        table([["Measure", "Result"],
+               [f"SQL accuracy: {run_a} / {run_b}", f"{pct(c['accuracy'][run_a])} / {pct(c['accuracy'][run_b])}"],
+               ["Mean SQL accuracy over both runs", pct(c["mean_accuracy"])],
+               ["Same outcome in both runs", f"{c['same_outcome']}/{c['questions_compared']} ({pct(c['same_outcome_rate'])})"],
+               ["SQL questions correct in both runs / wrong in both",
+                f"{c['always_correct']} / {c['never_correct']} (of {c['sql_questions']})"],
+               ["Questions whose result flipped", ", ".join(c["flipped"]) or "none"],
+               ["Identical SQL text in both runs", f"{c['identical_sql']}/{c['sql_questions']}"]], (110, 70))
+        heading("Question by question", 11, gap=4)
+        table([["ID", "Category", run_a, run_b, "Same SQL"]] +
+              [[r["id"], r["category"].replace("_", " "), r["a"], r["b"], "yes" if r["same_sql"] else "no"]
+               for r in c["rows"]], (16, 52, 38, 38, 36), size=8)
+
     # ---- usage page: app database (Postgres) and LangSmith
     if usage:
         pdf.add_page()
@@ -405,11 +431,11 @@ def main():
         print("The fpdf2 package is missing. Install it with: .\\venv\\Scripts\\python.exe -m pip install fpdf2")
         return 1
 
-    summary, records, check, usage = load_inputs(args.name)
+    summary, records, check, usage, consistency = load_inputs(args.name)
     good, reasons = judge(summary, check, args.min_accuracy)
     stamp = datetime.now().strftime("%Y-%m-%d")
     preview = ROOT / "eval_runs" / f"ColdChain_evaluation_{stamp}.pdf"
-    build_pdf(summary, records, check, good, reasons, preview, usage)
+    build_pdf(summary, records, check, good, reasons, preview, usage, consistency)
     print(f"Preview PDF: {preview.relative_to(ROOT)}")
     if not good:
         print("NOT GOOD - not published:")
