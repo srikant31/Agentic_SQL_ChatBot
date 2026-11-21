@@ -194,6 +194,10 @@ def build_pdf(summary, records, check, good, reasons, out_path, usage=None, cons
     pdf.set_font("Helvetica", "", 9)
     pdf.cell(0, 6, clean(f"Model {run['model']} on Groq  |  commit {run['commit']}  |  run finished {run['finished']}  |  "
                          f"LangSmith project '{run['langsmith_project']}'"), new_x="LMARGIN", new_y="NEXT")
+    if run.get("combined_from"):
+        pdf.set_font("Helvetica", "", 8.5)
+        pdf.multi_cell(0, 4.5, clean("Combined from separate runs of different questions: "
+                                     + "; ".join(run["combined_from"])), align="L", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
     y, gap = pdf.get_y(), 4

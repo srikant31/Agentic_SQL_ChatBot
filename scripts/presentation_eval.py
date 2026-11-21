@@ -11,6 +11,9 @@ Run from the project root (PowerShell, one line):
 Options:
     --subset presentation   24 stratified questions: 18 answerable + 6 safety/behaviour (default)
     --subset all            all 64 questions (about 420,000 tokens: more than one day of Groq free tier)
+    --subset remaining      the 40 golden questions NOT in the presentation subset (pair with --combine later)
+    --combine A,B           no model calls: merge eval_runs/A.jsonl and B.jsonl into one report named --name
+                            (e.g. --combine presentation,remaining --name full_combined)
     --subset departments    7 department questions (4 own-department, 3 forbidden) asked as Sales, Operations,
                             Finance and HR; about 12 model calls, 35,000-45,000 tokens
     --store-run N           also save every question, model call and grade in the app's feedback database
@@ -77,7 +80,8 @@ EVAL_TODAY_NOTE = "The golden data's fixed 'today' is 2026-06-30 (the model is t
 
 def parse_args():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--subset", choices=["presentation", "all", "departments"], default="presentation")
+    ap.add_argument("--subset", choices=["presentation", "all", "remaining", "departments"], default="presentation")
+    ap.add_argument("--combine")
     ap.add_argument("--store-run", type=int)
     ap.add_argument("--ids")
     ap.add_argument("--name", default="presentation")
@@ -446,13 +450,54 @@ def save_to_store(record, case, model_name):
                  model=model_name, route="test_run", detail=detail)
 
 
+def combine_runs(names, golden_order):
+    """Merge finished runs (different questions) into one report. Each question keeps the result from the run
+    that asked it; the report states which runs and dates it combines."""
+    merged, sources = {}, []
+    for name in names:
+        path = OUT_DIR / f"{name}.jsonl"
+        summary_path = OUT_DIR / f"{name}_summary.json"
+        if not path.exists() or not summary_path.exists():
+            sys.exit(f"STOP: eval_runs/{name}.jsonl or its summary is missing.")
+        run_meta = json.loads(summary_path.read_text(encoding="utf-8"))["run"]
+        sources.append(f"{name} ({run_meta['finished']}, {run_meta['questions_planned']} questions, "
+                       f"commit {run_meta['commit']})")
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                record = json.loads(line)
+                if record["id"] in merged:
+                    sys.exit(f"STOP: question {record['id']} appears in more than one run; combine only disjoint runs.")
+                merged[record["id"]] = record
+    ordered = [merged[i] for i in golden_order if i in merged]
+    errors = [r["id"] for r in ordered if r["outcome"] == "ERROR"]
+    meta = {"name": ARGS.name, "mode": "combined", "model": run_meta["model"], "commit": git_commit(),
+            "finished": datetime.now().strftime("%Y-%m-%d %H:%M"), "langsmith_project": ARGS.langsmith_project,
+            "questions_planned": len(ordered), "combined_from": sources}
+    summary, markdown = summarize(ordered, meta)
+    markdown = markdown.replace("\n## Headline numbers", "\nCombined from: " + "; ".join(sources) + "\n\n## Headline numbers", 1)
+    (OUT_DIR / f"{ARGS.name}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in ordered), encoding="utf-8")
+    (OUT_DIR / f"{ARGS.name}_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (OUT_DIR / f"{ARGS.name}_summary.md").write_text(markdown, encoding="utf-8")
+    print(markdown)
+    if errors:
+        print(f"WARNING: {len(errors)} question(s) still ERROR (not graded): {','.join(errors)}. Finish them with --resume first.")
+        return 2
+    print(f"Combined {len(ordered)} questions into eval_runs/{ARGS.name}_summary.md")
+    return 0
+
+
 # ---------------------------------------------------------------------------- main
 def main():
     golden = json.loads((ROOT / "golden_eval/golden.json").read_text(encoding="utf-8"))["cases"]
     by_id = {c["id"]: c for c in golden}
     if ARGS.subset == "departments":
         by_id = {c["id"]: c for c in DEPARTMENT_CASES}
-    ids = ARGS.ids.split(",") if ARGS.ids else (PRESENTATION_IDS if ARGS.subset == "presentation" else list(by_id))
+    if ARGS.combine:
+        return combine_runs(ARGS.combine.split(","), [c["id"] for c in golden])
+    if ARGS.subset == "remaining":
+        ids = [i for i in by_id if i not in PRESENTATION_IDS]
+    else:
+        ids = ARGS.ids.split(",") if ARGS.ids else (PRESENTATION_IDS if ARGS.subset == "presentation" else list(by_id))
     unknown = [i for i in ids if i not in by_id]
     if unknown:
         sys.exit(f"Unknown golden ids: {unknown}")
