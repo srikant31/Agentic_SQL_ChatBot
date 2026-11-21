@@ -16,8 +16,9 @@ POLICY = {
     "viewer": {"label": "General", "tables": set(ALL_TABLES) - {"employees"}, "hidden": {"email", "salary_inr"}},
     "sales": {"label": "Sales", "tables": {"customers", "orders", "order_items", "products", "regions"},
               "hidden": {"email"}},
+    # order_items is needed to link shipments to products (temperature excursions); its prices stay hidden.
     "operations": {"label": "Operations", "tables": {"shipments", "carriers", "warehouses", "temperature_readings",
-                                                     "orders", "products", "regions"},
+                                                     "orders", "order_items", "products", "regions"},
                    "hidden": set(MONEY_COLUMNS)},
     "finance": {"label": "Finance", "tables": {"orders", "order_items", "products", "customers", "regions",
                                                "shipments", "carriers", "warehouses"}, "hidden": {"email"}},

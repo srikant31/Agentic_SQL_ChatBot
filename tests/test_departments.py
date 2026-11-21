@@ -25,7 +25,8 @@ def test_every_department_reaches_exactly_its_own_tables(role, table):
 
 HIDDEN = [("viewer", "SELECT email FROM customers"), ("sales", "SELECT email FROM customers"),
           ("finance", "SELECT name, email FROM customers"), ("operations", "SELECT unit_price FROM products"),
-          ("operations", "SELECT discount_pct FROM orders"), ("operations", "SELECT freight_cost FROM shipments")]
+          ("operations", "SELECT discount_pct FROM orders"), ("operations", "SELECT freight_cost FROM shipments"),
+          ("operations", "SELECT unit_price FROM order_items")]
 
 
 @pytest.mark.parametrize("role, sql", HIDDEN)
@@ -38,7 +39,10 @@ def test_hidden_columns_are_rejected(role, sql):
                                        ("admin", "SELECT email FROM customers"),
                                        ("finance", "SELECT SUM(freight_cost) FROM shipments"),
                                        ("operations", "SELECT AVG(temp_c) FROM temperature_readings"),
-                                       ("sales", "SELECT SUM(quantity * unit_price) FROM order_items")])
+                                       ("sales", "SELECT SUM(quantity * unit_price) FROM order_items"),
+                                       ("operations", "SELECT s.shipment_id, p.max_temp_c FROM shipments s "
+                                                      "JOIN order_items oi ON oi.order_id = s.order_id "
+                                                      "JOIN products p ON p.product_id = oi.product_id")])
 def test_departments_can_read_their_own_sensitive_or_money_columns(role, sql):
     assert validate(sql, role)
 
@@ -103,7 +107,7 @@ def test_model_sees_only_its_departments_tables_and_columns(tmp_path):
 
 def test_scope_text_is_plain_english():
     assert d.scope_text("operations") == ("Operations: you can ask about regions, warehouses, carriers, products, "
-                                          "orders, shipments, temperature readings. Not included: discounts, freight "
+                                          "orders, order lines, shipments, temperature readings. Not included: discounts, freight "
                                           "costs, prices. Read-only.")
 
 
