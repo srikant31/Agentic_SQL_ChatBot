@@ -91,14 +91,16 @@ def parse_args():
 
 
 ARGS = parse_args()
-# Must be set before config/observability load .env (they never override existing variables).
-os.environ["LANGSMITH_PROJECT"] = ARGS.langsmith_project
-os.environ["LANGSMITH_HIDE_INPUTS"] = "true" if ARGS.hide_trace_text else "false"
-os.environ["LANGSMITH_HIDE_OUTPUTS"] = "true" if ARGS.hide_trace_text else "false"
+EVAL_TRACE_SETTINGS = {"LANGSMITH_PROJECT": ARGS.langsmith_project,
+                       "LANGSMITH_HIDE_INPUTS": "true" if ARGS.hide_trace_text else "false",
+                       "LANGSMITH_HIDE_OUTPUTS": "true" if ARGS.hide_trace_text else "false"}
 
 import config  # noqa: E402,F401  loads .env and Streamlit secrets, writes ca.pem if needed
 from observability import configure_observability, tracing_enabled  # noqa: E402
 configure_observability()
+# Applied AFTER config: Streamlit secrets overwrite these variables, which sent the first evaluation's
+# traces to the app's own project with text hidden.
+os.environ.update(EVAL_TRACE_SETTINGS)
 
 from langchain_core.callbacks import BaseCallbackHandler  # noqa: E402
 from langgraph.checkpoint.memory import InMemorySaver  # noqa: E402
